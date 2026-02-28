@@ -1,12 +1,15 @@
 <script lang="ts">
   import { api } from '../lib/api';
+  import LanguageSelect from './LanguageSelect.svelte';
 
   type Props = {
     sessionId: number;
     isRecording?: boolean;
+    hasAudio?: boolean;
+    language?: string;
     onSegmentClick?: (startTime: number) => void;
   };
-  let { sessionId, isRecording = false, onSegmentClick }: Props = $props();
+  let { sessionId, isRecording = false, hasAudio = false, language = 'en', onSegmentClick }: Props = $props();
 
   type Segment = {
     id: number;
@@ -21,9 +24,23 @@
 
   let segments = $state<Segment[]>([]);
   let container: HTMLDivElement | undefined = $state();
+  let error = $state('');
+  let retranscribeLang = $state('en');
+
+  $effect(() => { retranscribeLang = language; });
 
   async function load() {
     segments = await api.get<Segment[]>(`/sessions/${sessionId}/transcript`);
+  }
+
+  async function retranscribe() {
+    error = '';
+    try {
+      await api.post(`/sessions/${sessionId}/retranscribe`, { language: retranscribeLang });
+      await load();
+    } catch (e: any) {
+      error = e.message || 'Retranscribe failed';
+    }
   }
 
   // Listen for live transcript segments via WebSocket messages
@@ -70,6 +87,14 @@
     <p class="empty">
       {isRecording ? 'Waiting for speech...' : 'No transcript available.'}
     </p>
+    {#if hasAudio && !isRecording}
+      <div class="retranscribe-controls">
+        <LanguageSelect compact value={retranscribeLang} onchange={(code) => (retranscribeLang = code)} />
+        <button class="retranscribe-btn primary" onclick={retranscribe}>
+          Retranscribe
+        </button>
+      </div>
+    {/if}
   {:else}
     {#each segments as seg}
       <button
@@ -83,6 +108,14 @@
         <span class="text">{seg.text}</span>
       </button>
     {/each}
+    {#if hasAudio}
+      <div class="toolbar">
+        <LanguageSelect compact value={retranscribeLang} onchange={(code) => (retranscribeLang = code)} />
+        <button class="retranscribe-btn secondary" onclick={retranscribe}>
+          Retranscribe
+        </button>
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -138,5 +171,49 @@
     text-align: center;
     color: var(--text-faint);
     padding: 2rem;
+  }
+
+  .retranscribe-controls {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    justify-content: center;
+    margin-top: 0.75rem;
+  }
+
+  .toolbar {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    padding: 0.5rem;
+    border-top: 1px solid var(--border);
+    margin-top: 0.5rem;
+  }
+
+  .retranscribe-btn {
+    padding: 0.4rem 1rem;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+
+  .retranscribe-btn.primary {
+    background: var(--accent);
+    color: white;
+  }
+
+  .retranscribe-btn.primary:hover {
+    opacity: 0.9;
+  }
+
+  .retranscribe-btn.secondary {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+
+  .retranscribe-btn.secondary:hover {
+    background: var(--border);
   }
 </style>
