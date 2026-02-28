@@ -206,16 +206,17 @@
     <p class="empty">No matches found.</p>
   {:else}
     {#each filteredSegments() as seg}
-      <button
-        class="segment"
-        onclick={() => onSegmentClick?.(seg.start_time)}
-      >
-        <span class="timestamp">{formatTime(seg.start_time)}</span>
+      <div class="segment">
+        <button
+          class="timestamp"
+          onclick={() => onSegmentClick?.(seg.start_time)}
+          title="Jump to {formatTime(seg.start_time)}"
+        >{formatTime(seg.start_time)}</button>
         {#if speakerLabel(seg)}
           <span class="speaker">{speakerLabel(seg)}</span>
         {/if}
         <span class="text">{seg.text}</span>
-      </button>
+      </div>
     {/each}
   {/if}
 </div>
@@ -273,13 +274,7 @@
     gap: 0.5rem;
     padding: 0.5rem;
     border-radius: 4px;
-    cursor: pointer;
-    width: 100%;
-    background: none;
-    border: none;
-    color: inherit;
-    font: inherit;
-    text-align: left;
+    user-select: text;
   }
 
   .segment:hover {
@@ -292,6 +287,14 @@
     font-size: 0.8rem;
     flex-shrink: 0;
     padding-top: 0.1rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.1rem 0 0 0;
+  }
+
+  .timestamp:hover {
+    color: var(--accent);
   }
 
   .speaker {
