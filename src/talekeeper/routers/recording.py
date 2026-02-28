@@ -18,7 +18,7 @@ _active_recording_session: int | None = None
 
 
 async def _run_transcription_on_chunk(
-    accumulated_audio: bytes, session_id: int, websocket: WebSocket, offset: float
+    accumulated_audio: bytes, session_id: int, websocket: WebSocket, offset: float, language: str = "en"
 ) -> None:
     """Run incremental transcription on accumulated audio and stream results back."""
     try:
@@ -30,7 +30,7 @@ async def _run_transcription_on_chunk(
 
         webm_bytes_to_wav(accumulated_audio, wav_path)
 
-        segments = transcribe(wav_path)
+        segments = transcribe(wav_path, language=language)
 
         for seg in segments:
             if seg.start_time >= offset:
@@ -77,6 +77,7 @@ async def recording_ws(websocket: WebSocket, session_id: int) -> None:
 
         session = dict(rows[0])
         campaign_id = session["campaign_id"]
+        session_language = session.get("language", "en")
 
         # Update session status to recording
         await db.execute(
@@ -108,7 +109,7 @@ async def recording_ws(websocket: WebSocket, session_id: int) -> None:
                     accumulated = b"".join(chunks)
                     asyncio.create_task(
                         _run_transcription_on_chunk(
-                            accumulated, session_id, websocket, last_transcribed_offset
+                            accumulated, session_id, websocket, last_transcribed_offset, session_language
                         )
                     )
             elif "text" in data:
