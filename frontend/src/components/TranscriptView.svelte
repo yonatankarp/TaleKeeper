@@ -24,7 +24,8 @@
 
   let segments = $state<Segment[]>([]);
   let container: HTMLDivElement | undefined = $state();
-  let error = $state('');
+  let transcribing = $state(false);
+  let error = $state<string | null>(null);
   let retranscribeLang = $state('en');
 
   $effect(() => { retranscribeLang = language; });
@@ -34,12 +35,15 @@
   }
 
   async function retranscribe() {
-    error = '';
+    transcribing = true;
+    error = null;
     try {
       await api.post(`/sessions/${sessionId}/retranscribe`, { language: retranscribeLang });
       await load();
-    } catch (e: any) {
-      error = e.message || 'Retranscribe failed';
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Transcription failed';
+    } finally {
+      transcribing = false;
     }
   }
 
@@ -82,8 +86,14 @@
   $effect(() => { load(); });
 </script>
 
+{#if error}
+  <p class="error">{error}</p>
+{/if}
+
 <div class="transcript-container" bind:this={container}>
-  {#if segments.length === 0}
+  {#if transcribing}
+    <p class="empty">Transcribing audio… this may take a while.</p>
+  {:else if segments.length === 0}
     <p class="empty">
       {isRecording ? 'Waiting for speech...' : 'No transcript available.'}
     </p>
@@ -171,6 +181,15 @@
     text-align: center;
     color: var(--text-faint);
     padding: 2rem;
+  }
+
+  .error {
+    color: var(--danger, #e53e3e);
+    background: var(--danger-bg, #fff5f5);
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    margin-bottom: 0.5rem;
   }
 
   .retranscribe-controls {

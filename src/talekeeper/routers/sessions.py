@@ -1,9 +1,10 @@
 """Session CRUD API endpoints."""
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from talekeeper.db import get_db
+from talekeeper.services.transcription import SUPPORTED_LANGUAGES
 
 router = APIRouter(tags=["sessions"])
 
@@ -13,12 +14,26 @@ class SessionCreate(BaseModel):
     date: str
     language: str | None = None
 
+    @field_validator("language")
+    @classmethod
+    def validate_language(cls, v: str | None) -> str | None:
+        if v is not None and v not in SUPPORTED_LANGUAGES:
+            raise ValueError(f"Unsupported language: {v}")
+        return v
+
 
 class SessionUpdate(BaseModel):
     name: str | None = None
     date: str | None = None
     status: str | None = None
     language: str | None = None
+
+    @field_validator("language")
+    @classmethod
+    def validate_language(cls, v: str | None) -> str | None:
+        if v is not None and v not in SUPPORTED_LANGUAGES:
+            raise ValueError(f"Unsupported language: {v}")
+        return v
 
 
 @router.post("/api/campaigns/{campaign_id}/sessions")
