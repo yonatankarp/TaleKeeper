@@ -1,0 +1,283 @@
+<script lang="ts">
+  import { api } from '../lib/api';
+
+  type Props = { sessionId: number };
+  let { sessionId }: Props = $props();
+
+  type Summary = {
+    id: number;
+    type: string;
+    content: string;
+    model_used: string;
+    generated_at: string;
+    character_name?: string;
+    player_name?: string;
+  };
+
+  let summaries = $state<Summary[]>([]);
+  let loading = $state(false);
+  let error = $state<string | null>(null);
+  let editingId = $state<number | null>(null);
+  let editContent = $state('');
+  let ollamaOk = $state<boolean | null>(null);
+  let ollamaMsg = $state('');
+
+  async function load() {
+    summaries = await api.get<Summary[]>(`/sessions/${sessionId}/summaries`);
+  }
+
+  async function checkOllama() {
+    try {
+      const status = await api.get<{ status: string; message?: string }>('/ollama/status');
+      ollamaOk = status.status === 'ok';
+      ollamaMsg = status.message ?? '';
+    } catch {
+      ollamaOk = false;
+      ollamaMsg = 'Cannot reach Ollama';
+    }
+  }
+
+  async function generateFull() {
+    loading = true;
+    error = null;
+    try {
+      await api.post(`/sessions/${sessionId}/generate-summary`, { type: 'full' });
+      await load();
+    } catch (e: any) {
+      error = e.message;
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function generatePov() {
+    loading = true;
+    error = null;
+    try {
+      await api.post(`/sessions/${sessionId}/generate-summary`, { type: 'pov' });
+      await load();
+    } catch (e: any) {
+      error = e.message;
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function regenerate(type: string) {
+    if (!confirm(`Regenerate ${type} summaries? This will replace existing ones.`)) return;
+    loading = true;
+    error = null;
+    try {
+      await api.post(`/sessions/${sessionId}/regenerate-summary`, { type });
+      await load();
+    } catch (e: any) {
+      error = e.message;
+    } finally {
+      loading = false;
+    }
+  }
+
+  function startEdit(s: Summary) {
+    editingId = s.id;
+    editContent = s.content;
+  }
+
+  async function saveEdit() {
+    if (editingId === null) return;
+    await api.put(`/summaries/${editingId}`, { content: editContent });
+    editingId = null;
+    await load();
+  }
+
+  async function deleteSummary(id: number) {
+    if (!confirm('Delete this summary?')) return;
+    await api.del(`/summaries/${id}`);
+    await load();
+  }
+
+  $effect(() => { load(); checkOllama(); });
+
+  let fullSummaries = $derived(summaries.filter(s => s.type === 'full'));
+  let povSummaries = $derived(summaries.filter(s => s.type === 'pov'));
+</script>
+
+<div class="summary-section">
+  {#if error}
+    <div class="error">{error}</div>
+  {/if}
+
+  {#if ollamaOk === false}
+    <div class="warning">
+      <strong>Ollama not available</strong>
+      <p>{ollamaMsg || 'Install Ollama and run: ollama serve'}</p>
+      <p>Then pull a model: <code>ollama pull llama3.1:8b</code></p>
+    </div>
+  {/if}
+
+  <div class="actions">
+    <button class="btn btn-primary" onclick={generateFull} disabled={loading || ollamaOk === false}>
+      {loading ? 'Generating...' : 'Generate Summary'}
+    </button>
+    <button class="btn btn-primary" onclick={generatePov} disabled={loading || ollamaOk === false}>
+      {loading ? 'Generating...' : 'Generate POV Summaries'}
+    </button>
+  </div>
+
+  {#if fullSummaries.length > 0}
+    <h3>Session Summary</h3>
+    {#each fullSummaries as s}
+      <div class="summary-card">
+        {#if editingId === s.id}
+          <textarea class="edit-area" bind:value={editContent}></textarea>
+          <div class="btn-group">
+            <button class="btn btn-primary btn-sm" onclick={saveEdit}>Save</button>
+            <button class="btn btn-sm" onclick={() => (editingId = null)}>Cancel</button>
+          </div>
+        {:else}
+          <div class="summary-content">{s.content}</div>
+          <div class="summary-meta">
+            <span>Model: {s.model_used}</span>
+            <span>Generated: {s.generated_at}</span>
+          </div>
+          <div class="btn-group">
+            <button class="btn btn-sm" onclick={() => startEdit(s)}>Edit</button>
+            <button class="btn btn-sm" onclick={() => regenerate('full')}>Regenerate</button>
+            <button class="btn btn-sm btn-danger" onclick={() => deleteSummary(s.id)}>Delete</button>
+          </div>
+        {/if}
+      </div>
+    {/each}
+  {/if}
+
+  {#if povSummaries.length > 0}
+    <h3>Character POV Summaries</h3>
+    {#each povSummaries as s}
+      <div class="summary-card">
+        <h4>{s.character_name ?? 'Unknown'} {s.player_name ? `(${s.player_name})` : ''}</h4>
+        {#if editingId === s.id}
+          <textarea class="edit-area" bind:value={editContent}></textarea>
+          <div class="btn-group">
+            <button class="btn btn-primary btn-sm" onclick={saveEdit}>Save</button>
+            <button class="btn btn-sm" onclick={() => (editingId = null)}>Cancel</button>
+          </div>
+        {:else}
+          <div class="summary-content">{s.content}</div>
+          <div class="summary-meta">
+            <span>Model: {s.model_used}</span>
+            <span>Generated: {s.generated_at}</span>
+          </div>
+          <div class="btn-group">
+            <button class="btn btn-sm" onclick={() => startEdit(s)}>Edit</button>
+            <button class="btn btn-sm btn-danger" onclick={() => deleteSummary(s.id)}>Delete</button>
+          </div>
+        {/if}
+      </div>
+    {/each}
+    <button class="btn btn-sm" onclick={() => regenerate('pov')}>Regenerate All POV</button>
+  {/if}
+
+  {#if summaries.length === 0 && !loading}
+    <p class="empty">No summaries generated yet.</p>
+  {/if}
+</div>
+
+<style>
+  .summary-section {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .error {
+    background: var(--error-bg);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    padding: 0.75rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+  }
+
+  .warning {
+    background: var(--warning-bg);
+    border: 1px solid var(--warning);
+    color: var(--warning);
+    padding: 0.75rem;
+    border-radius: 4px;
+    font-size: 0.9rem;
+  }
+
+  .warning code {
+    background: var(--bg-input);
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+  }
+
+  .warning p { margin: 0.25rem 0; }
+
+  .actions {
+    display: flex;
+    gap: 0.75rem;
+  }
+
+  .summary-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+  }
+
+  .summary-card h4 {
+    margin: 0 0 0.5rem;
+    color: var(--accent);
+  }
+
+  .summary-content {
+    white-space: pre-wrap;
+    line-height: 1.6;
+    font-size: 0.9rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .summary-meta {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.75rem;
+    color: var(--text-faint);
+    margin-bottom: 0.5rem;
+  }
+
+  .edit-area {
+    width: 100%;
+    min-height: 200px;
+    padding: 0.75rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.9rem;
+    resize: vertical;
+    box-sizing: border-box;
+    margin-bottom: 0.5rem;
+  }
+
+  .btn {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-surface);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+
+  .btn:hover { background: var(--bg-hover); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn-danger { color: var(--accent); }
+  .btn-sm { padding: 0.25rem 0.75rem; font-size: 0.8rem; }
+  .btn-group { display: flex; gap: 0.5rem; }
+
+  .empty { color: var(--text-faint); text-align: center; padding: 2rem; }
+</style>

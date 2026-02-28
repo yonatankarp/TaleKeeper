@@ -1,0 +1,24 @@
+services:
+  talekeeper:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/db:/app/data/db
+      - ./data/audio:/app/data/audio
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - HF_TOKEN=${HF_TOKEN:-}
+      - TALEKEEPER_SECRET=${TALEKEEPER_SECRET:-}
+    depends_on:
+      - ollama
+
+  ollama:
+    image: ollama/ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+
+volumes:
+  ollama_models:

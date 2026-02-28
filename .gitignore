@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Build output (generated from frontend)
+src/talekeeper/static/assets/
+src/talekeeper/static/index.html
+src/talekeeper/static/manifest.json
+
+# Data (user recordings, database)
+data/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.sw?
+*.local
+
+# Logs
+*.log

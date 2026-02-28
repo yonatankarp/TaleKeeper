@@ -1,0 +1,16 @@
+{
+  "name": "TaleKeeper",
+  "short_name": "TaleKeeper",
+  "description": "Record, transcribe, and summarize D&D sessions",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1a1a2e",
+  "theme_color": "#e94560",
+  "icons": [
+    {
+      "src": "/vite.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
