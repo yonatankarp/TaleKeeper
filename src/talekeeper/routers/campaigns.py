@@ -11,19 +11,21 @@ router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
 class CampaignCreate(BaseModel):
     name: str
     description: str = ""
+    language: str = "en"
 
 
 class CampaignUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    language: str | None = None
 
 
 @router.post("")
 async def create_campaign(body: CampaignCreate) -> dict:
     async with get_db() as db:
         cursor = await db.execute(
-            "INSERT INTO campaigns (name, description) VALUES (?, ?)",
-            (body.name, body.description),
+            "INSERT INTO campaigns (name, description, language) VALUES (?, ?, ?)",
+            (body.name, body.description, body.language),
         )
         campaign_id = cursor.lastrowid
         row = await db.execute_fetchall(
@@ -69,6 +71,9 @@ async def update_campaign(campaign_id: int, body: CampaignUpdate) -> dict:
         if body.description is not None:
             fields.append("description = ?")
             values.append(body.description)
+        if body.language is not None:
+            fields.append("language = ?")
+            values.append(body.language)
 
         if fields:
             fields.append("updated_at = datetime('now')")
