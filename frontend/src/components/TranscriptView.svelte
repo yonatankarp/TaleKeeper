@@ -90,6 +90,15 @@
   <p class="error">{error}</p>
 {/if}
 
+{#if hasAudio && !isRecording}
+  <div class="retranscribe-bar">
+    <LanguageSelect compact value={retranscribeLang} onchange={(code) => (retranscribeLang = code)} />
+    <button class="retranscribe-btn" onclick={retranscribe} disabled={transcribing}>
+      {transcribing ? 'Transcribing…' : 'Retranscribe'}
+    </button>
+  </div>
+{/if}
+
 <div class="transcript-container" bind:this={container}>
   {#if transcribing}
     <p class="empty">Transcribing audio… this may take a while.</p>
@@ -97,14 +106,6 @@
     <p class="empty">
       {isRecording ? 'Waiting for speech...' : 'No transcript available.'}
     </p>
-    {#if hasAudio && !isRecording}
-      <div class="retranscribe-controls">
-        <LanguageSelect compact value={retranscribeLang} onchange={(code) => (retranscribeLang = code)} />
-        <button class="retranscribe-btn primary" onclick={retranscribe}>
-          Retranscribe
-        </button>
-      </div>
-    {/if}
   {:else}
     {#each segments as seg}
       <button
@@ -118,14 +119,6 @@
         <span class="text">{seg.text}</span>
       </button>
     {/each}
-    {#if hasAudio}
-      <div class="toolbar">
-        <LanguageSelect compact value={retranscribeLang} onchange={(code) => (retranscribeLang = code)} />
-        <button class="retranscribe-btn secondary" onclick={retranscribe}>
-          Retranscribe
-        </button>
-      </div>
-    {/if}
   {/if}
 </div>
 
@@ -192,21 +185,11 @@
     margin-bottom: 0.5rem;
   }
 
-  .retranscribe-controls {
+  .retranscribe-bar {
     display: flex;
     gap: 0.5rem;
     align-items: center;
-    justify-content: center;
-    margin-top: 0.75rem;
-  }
-
-  .toolbar {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-    padding: 0.5rem;
-    border-top: 1px solid var(--border);
-    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
   }
 
   .retranscribe-btn {
@@ -216,23 +199,17 @@
     cursor: pointer;
     font-size: 0.85rem;
     font-weight: 500;
-  }
-
-  .retranscribe-btn.primary {
     background: var(--accent);
     color: white;
+    white-space: nowrap;
   }
 
-  .retranscribe-btn.primary:hover {
+  .retranscribe-btn:hover:not(:disabled) {
     opacity: 0.9;
   }
 
-  .retranscribe-btn.secondary {
-    background: var(--bg-hover);
-    color: var(--text);
-  }
-
-  .retranscribe-btn.secondary:hover {
-    background: var(--border);
+  .retranscribe-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 </style>

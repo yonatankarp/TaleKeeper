@@ -44,6 +44,12 @@
     await load();
   }
 
+  async function deleteCampaign() {
+    if (!confirm('Delete this campaign and all its sessions? This cannot be undone.')) return;
+    await api.del(`/campaigns/${campaignId}`);
+    navigate('/');
+  }
+
   function formatTime(seconds: number): string {
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
@@ -82,6 +88,7 @@
       <div class="btn-group">
         <button class="btn" onclick={() => navigate(`/campaigns/${campaignId}/roster`)}>Roster</button>
         <button class="btn btn-primary" onclick={() => (showNewSession = true)}>New Session</button>
+        <button class="btn btn-danger" onclick={deleteCampaign}>Delete Campaign</button>
       </div>
     </div>
 

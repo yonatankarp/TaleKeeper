@@ -11,7 +11,13 @@
     campaigns = await api.get<Campaign[]>('/campaigns');
   }
 
-  $effect(() => { load(); });
+  // Reload campaigns on every route change so sidebar stays in sync
+  $effect(() => {
+    const onHashChange = () => load();
+    window.addEventListener('hashchange', onHashChange);
+    load();
+    return () => window.removeEventListener('hashchange', onHashChange);
+  });
 
   function go(path: string) {
     navigate(path);

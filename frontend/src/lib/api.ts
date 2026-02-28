@@ -11,7 +11,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const res = await fetch(`${BASE}${path}`, opts);
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail ?? res.statusText);
+    const detail = err.detail;
+    const message = typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : res.statusText;
+    throw new Error(message);
   }
   return res.json();
 }

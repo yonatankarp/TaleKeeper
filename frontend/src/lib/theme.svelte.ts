@@ -1,10 +1,24 @@
-export const theme = $state({
-  current: (localStorage.getItem('theme') as 'dark' | 'light') ?? 'dark',
-});
+function getInitialTheme(): 'dark' | 'light' {
+  try {
+    const stored = localStorage.getItem('theme');
+    if (stored === 'dark' || stored === 'light') return stored;
+  } catch {
+    // localStorage unavailable
+  }
+  return 'dark';
+}
 
-$effect(() => {
-  document.documentElement.dataset.theme = theme.current;
-  localStorage.setItem('theme', theme.current);
+export const theme = $state({ current: getInitialTheme() });
+
+$effect.root(() => {
+  $effect(() => {
+    document.documentElement.dataset.theme = theme.current;
+    try {
+      localStorage.setItem('theme', theme.current);
+    } catch {
+      // localStorage unavailable
+    }
+  });
 });
 
 export function toggleTheme() {
