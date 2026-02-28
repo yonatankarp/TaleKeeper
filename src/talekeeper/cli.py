@@ -22,16 +22,27 @@ def cmd_serve(args: argparse.Namespace) -> None:
 
     host = args.host
     port = args.port
+    open_browser = not args.no_browser
 
-    if not args.no_browser:
-        webbrowser.open(f"http://{host}:{port}")
+    class _Config(uvicorn.Config):
+        pass
 
-    uvicorn.run(
+    server = uvicorn.Server(_Config(
         "talekeeper.app:app",
         host=host,
         port=port,
         reload=args.reload,
-    )
+    ))
+
+    original_startup = server.startup
+
+    async def _startup_then_open(*a: object, **kw: object) -> None:
+        await original_startup(*a, **kw)  # type: ignore[arg-type]
+        if open_browser and server.started:
+            webbrowser.open(f"http://{host}:{port}")
+
+    server.startup = _startup_then_open  # type: ignore[assignment]
+    server.run()
 
 
 def main() -> None:

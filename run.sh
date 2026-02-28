@@ -10,6 +10,9 @@ source .venv/bin/activate
 echo "Building frontend..."
 (cd frontend && npm install --silent && npm run build)
 
+# Environment variables to run the service locally
+OLLAMA_URL=http://localhost:11434
+
 # Start server (pass through any args, e.g. --reload --no-browser)
 echo "Starting TaleKeeper..."
 exec talekeeper serve "$@"

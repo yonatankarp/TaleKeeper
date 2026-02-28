@@ -19,6 +19,10 @@ services:
       - "11434:11434"
     volumes:
       - ollama_models:/root/.ollama
+    entrypoint: /bin/sh
+    command: 
+      - -c
+      - "ollama serve & sleep 10 && ollama pull llama3.1:8b && wait"
 
 volumes:
   ollama_models:

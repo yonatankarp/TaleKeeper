@@ -13,9 +13,25 @@ from talekeeper.db import init_db
 from talekeeper.routers import campaigns, sessions, roster, recording, transcripts, speakers, summaries, exports, settings
 
 
+def _cleanup_orphaned_chunk_dirs() -> None:
+    """Delete any orphaned tmp_* directories under data/audio/."""
+    import shutil
+
+    audio_root = Path("data/audio")
+    if not audio_root.exists():
+        return
+    for campaign_dir in audio_root.iterdir():
+        if not campaign_dir.is_dir():
+            continue
+        for item in campaign_dir.iterdir():
+            if item.is_dir() and item.name.startswith("tmp_"):
+                shutil.rmtree(item, ignore_errors=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
+    _cleanup_orphaned_chunk_dirs()
     yield
 
 
