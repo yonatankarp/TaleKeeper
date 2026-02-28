@@ -1,11 +1,12 @@
 <script lang="ts">
   import { api } from '../lib/api';
   import { navigate } from '../lib/router.svelte';
+  import LanguageSelect from '../components/LanguageSelect.svelte';
 
   type Props = { campaignId: number };
   let { campaignId }: Props = $props();
 
-  type Campaign = { id: number; name: string; description: string };
+  type Campaign = { id: number; name: string; description: string; language: string };
   type Session = { id: number; name: string; date: string; status: string };
   type Dashboard = { session_count: number; total_recorded_time: number; most_recent_session_date: string | null };
 
@@ -15,6 +16,7 @@
   let showNewSession = $state(false);
   let newSessionName = $state('');
   let newSessionDate = $state(new Date().toISOString().split('T')[0]);
+  let newSessionLang = $state('en');
 
   async function load() {
     [campaign, sessions, dashboard] = await Promise.all([
@@ -29,6 +31,7 @@
     await api.post(`/campaigns/${campaignId}/sessions`, {
       name: newSessionName,
       date: newSessionDate,
+      language: newSessionLang,
     });
     newSessionName = '';
     showNewSession = false;
@@ -59,6 +62,12 @@
   }
 
   $effect(() => { load(); });
+
+  $effect(() => {
+    if (campaign) {
+      newSessionLang = campaign.language;
+    }
+  });
 </script>
 
 <div class="page">
@@ -97,6 +106,8 @@
       <div class="card form-card">
         <input type="text" placeholder="Session name" bind:value={newSessionName} />
         <input type="date" bind:value={newSessionDate} />
+        <label class="field-label">Language</label>
+        <LanguageSelect value={newSessionLang} onchange={(code) => (newSessionLang = code)} />
         <div class="btn-group">
           <button class="btn btn-primary" onclick={createSession}>Create</button>
           <button class="btn" onclick={() => (showNewSession = false)}>Cancel</button>
@@ -229,6 +240,13 @@
   .btn-danger { color: var(--accent); }
   .btn-sm { padding: 0.25rem 0.75rem; font-size: 0.8rem; }
   .btn-group { display: flex; gap: 0.5rem; }
+
+  .field-label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 0.25rem;
+  }
 
   .empty { text-align: center; color: var(--text-muted); margin-top: 2rem; }
 </style>
