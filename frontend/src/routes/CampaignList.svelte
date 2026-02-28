@@ -2,10 +2,13 @@
   import { api } from '../lib/api';
   import { navigate } from '../lib/router.svelte';
   import LanguageSelect from '../components/LanguageSelect.svelte';
+  import Spinner from '../components/Spinner.svelte';
+  import ConfirmDialog from '../components/ConfirmDialog.svelte';
 
   type Campaign = { id: number; name: string; description: string; language: string; created_at: string };
 
   let campaigns = $state<Campaign[]>([]);
+  let pageLoading = $state(true);
   let showCreate = $state(false);
   let newName = $state('');
   let newDesc = $state('');
@@ -14,13 +17,20 @@
   let editDesc = $state('');
   let newLang = $state('en');
   let editLang = $state('en');
+  let confirmDeleteId = $state<number | null>(null);
+  let createNameError = $state(false);
 
   async function load() {
     campaigns = await api.get<Campaign[]>('/campaigns');
+    pageLoading = false;
   }
 
   async function create() {
-    if (!newName.trim()) return;
+    if (!newName.trim()) {
+      createNameError = true;
+      return;
+    }
+    createNameError = false;
     await api.post('/campaigns', { name: newName, description: newDesc, language: newLang });
     newName = '';
     newDesc = '';
@@ -44,14 +54,17 @@
   }
 
   async function remove(id: number) {
-    if (!confirm('Delete this campaign and all its sessions?')) return;
     await api.del(`/campaigns/${id}`);
+    confirmDeleteId = null;
     await load();
   }
 
   $effect(() => { load(); });
 </script>
 
+{#if pageLoading}
+  <div class="loading"><Spinner /> Loading campaigns...</div>
+{:else}
 <div class="page">
   <div class="page-header">
     <h2>Campaigns</h2>
@@ -60,7 +73,8 @@
 
   {#if showCreate}
     <div class="card form-card">
-      <input type="text" placeholder="Campaign name" bind:value={newName} />
+      <input type="text" placeholder="Campaign name" bind:value={newName} class:input-error={createNameError} oninput={() => (createNameError = false)} />
+      {#if createNameError}<p class="field-error">Campaign name is required</p>{/if}
       <textarea placeholder="Description (optional)" bind:value={newDesc}></textarea>
       <label class="field-label">Language</label>
       <LanguageSelect value={newLang} onchange={(code) => (newLang = code)} />
@@ -90,7 +104,7 @@
           {/if}
           <div class="btn-group">
             <button class="btn btn-sm" onclick={() => startEdit(c)}>Edit</button>
-            <button class="btn btn-sm btn-danger" onclick={() => remove(c.id)}>Delete</button>
+            <button class="btn btn-sm btn-danger" onclick={() => (confirmDeleteId = c.id)}>Delete</button>
           </div>
         {/if}
       </div>
@@ -98,9 +112,20 @@
   </div>
 
   {#if campaigns.length === 0 && !showCreate}
-    <p class="empty">No campaigns yet. Create one to get started.</p>
+    <p class="empty">No campaigns yet. Create your first campaign to start recording sessions.</p>
   {/if}
 </div>
+{/if}
+
+{#if confirmDeleteId !== null}
+  <ConfirmDialog
+    title="Delete Campaign"
+    message="This will permanently delete this campaign and all its sessions, transcripts, and audio. This cannot be undone."
+    confirmLabel="Delete"
+    onconfirm={() => remove(confirmDeleteId!)}
+    oncancel={() => (confirmDeleteId = null)}
+  />
+{/if}
 
 <style>
   .page-header {
@@ -188,6 +213,25 @@
     font-size: 0.8rem;
     color: var(--text-muted);
     margin-bottom: 0.25rem;
+  }
+
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 3rem;
+    color: var(--text-muted);
+  }
+
+  .input-error {
+    border-color: var(--accent) !important;
+  }
+
+  .field-error {
+    color: var(--accent);
+    font-size: 0.8rem;
+    margin: -0.25rem 0 0.5rem;
   }
 
   .empty {

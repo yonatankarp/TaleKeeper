@@ -80,7 +80,7 @@
         <button class="btn" onclick={() => downloadFile(`/api/summaries/${s.id}/export/pdf`)}>Export PDF</button>
         <button class="btn" onclick={() => downloadFile(`/api/summaries/${s.id}/export/text`)}>Export Text</button>
         <button class="btn" onclick={() => copyToClipboard(s.content)}>Copy to Clipboard</button>
-        <button class="btn" onclick={() => prepareEmail(s.id)}>Prepare Email</button>
+        <button class="btn" onclick={() => prepareEmail(s.id)}>Share via Email</button>
       </div>
     {/each}
   {/if}
@@ -102,32 +102,36 @@
   {/if}
 
   {#if emailSummaryId !== null}
-    <div class="email-dialog">
-      <h4>Prepare Email</h4>
-      <div class="email-field">
-        <label>Subject</label>
-        <div class="email-row">
-          <input type="text" bind:value={emailSubject} readonly />
-          <button class="btn btn-sm" onclick={() => copyToClipboard(emailSubject)}>Copy</button>
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="email-backdrop" onclick={(e) => { if (e.target === e.currentTarget) emailSummaryId = null; }}>
+      <div class="email-dialog">
+        <h4>Share via Email</h4>
+        <div class="email-field">
+          <label>Subject</label>
+          <div class="email-row">
+            <input type="text" class="readonly-field" bind:value={emailSubject} readonly />
+            <button class="btn btn-sm" onclick={() => copyToClipboard(emailSubject)}>Copy</button>
+          </div>
         </div>
-      </div>
-      <div class="email-field">
-        <label>Body</label>
-        <div class="email-row">
-          <textarea readonly>{emailBody}</textarea>
-          <button class="btn btn-sm" onclick={() => copyToClipboard(emailBody)}>Copy</button>
+        <div class="email-field">
+          <label>Body</label>
+          <div class="email-row">
+            <textarea class="readonly-field" readonly>{emailBody}</textarea>
+            <button class="btn btn-sm" onclick={() => copyToClipboard(emailBody)}>Copy</button>
+          </div>
         </div>
-      </div>
-      <div class="email-field">
-        <label>Send directly (requires SMTP config)</label>
-        <div class="email-row">
-          <input type="email" placeholder="recipient@example.com" bind:value={emailTo} />
-          <button class="btn btn-primary btn-sm" onclick={sendEmail} disabled={sending}>
-            {sending ? 'Sending...' : 'Send'}
-          </button>
+        <div class="email-field">
+          <label>Send directly (requires SMTP config)</label>
+          <div class="email-row">
+            <input type="email" placeholder="recipient@example.com" bind:value={emailTo} />
+            <button class="btn btn-primary btn-sm" onclick={sendEmail} disabled={sending}>
+              {sending ? 'Sending...' : 'Send'}
+            </button>
+          </div>
         </div>
+        <button class="btn btn-sm" onclick={() => (emailSummaryId = null)}>Close</button>
       </div>
-      <button class="btn btn-sm" onclick={() => (emailSummaryId = null)}>Close</button>
     </div>
   {/if}
 
@@ -173,11 +177,23 @@
     to { opacity: 1; transform: translateY(0); }
   }
 
+  .email-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 300;
+  }
+
   .email-dialog {
     background: var(--bg-surface);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 1.25rem;
+    max-width: 600px;
+    width: 90%;
   }
 
   .email-dialog h4 { margin: 0 0 1rem; }
@@ -211,6 +227,11 @@
   textarea {
     min-height: 100px;
     resize: vertical;
+  }
+
+  .readonly-field {
+    opacity: 0.7;
+    background: var(--bg-body);
   }
 
   .btn {

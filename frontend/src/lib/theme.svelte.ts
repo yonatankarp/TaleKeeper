@@ -5,6 +5,10 @@ function getInitialTheme(): 'dark' | 'light' {
   } catch {
     // localStorage unavailable
   }
+  // Detect OS color scheme preference
+  if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: light)').matches) {
+    return 'light';
+  }
   return 'dark';
 }
 

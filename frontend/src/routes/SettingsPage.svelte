@@ -1,7 +1,9 @@
 <script lang="ts">
   import { api } from '../lib/api';
+  import Spinner from '../components/Spinner.svelte';
 
   let settings = $state<Record<string, string>>({});
+  let pageLoading = $state(true);
   let toast = $state<string | null>(null);
   let testingOllama = $state(false);
   let ollamaResult = $state<string | null>(null);
@@ -12,6 +14,7 @@
     settings = await api.get<Record<string, string>>('/settings');
     if (!settings.whisper_model) settings.whisper_model = 'medium';
     if (!settings.ollama_model) settings.ollama_model = 'llama3.1:8b';
+    pageLoading = false;
   }
 
   async function save() {
@@ -41,6 +44,9 @@
   $effect(() => { load(); });
 </script>
 
+{#if pageLoading}
+  <div class="loading"><Spinner /> Loading settings...</div>
+{:else}
 <div class="page">
   <h2>Settings</h2>
 
@@ -107,8 +113,18 @@
 
   <button class="btn btn-primary" onclick={save}>Save Settings</button>
 </div>
+{/if}
 
 <style>
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 3rem;
+    color: var(--text-muted);
+  }
+
   .section {
     background: var(--bg-surface);
     border: 1px solid var(--border);

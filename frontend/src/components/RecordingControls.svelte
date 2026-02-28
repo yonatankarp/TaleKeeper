@@ -1,6 +1,12 @@
 <script lang="ts">
-  type Props = { sessionId: number; status: string; onStatusChange: () => void };
-  let { sessionId, status, onStatusChange }: Props = $props();
+  type Props = {
+    sessionId: number;
+    status: string;
+    onStatusChange: () => void;
+    onRecordingStateChange?: (state: 'idle' | 'recording' | 'paused', elapsed: number) => void;
+    onTranscriptSegment?: (seg: { text: string; start_time: number; end_time: number }) => void;
+  };
+  let { sessionId, status, onStatusChange, onRecordingStateChange, onTranscriptSegment }: Props = $props();
 
   let recordingState = $state<'idle' | 'recording' | 'paused'>('idle');
   let elapsed = $state(0);
@@ -38,6 +44,9 @@
         audio: {
           channelCount: 1,
           sampleRate: 44100,
+          autoGainControl: true,
+          noiseSuppression: true,
+          echoCancellation: false,
         },
       });
 
@@ -60,6 +69,17 @@
       ws.onerror = () => {
         error = 'WebSocket connection failed.';
         cleanup();
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'transcript' && onTranscriptSegment) {
+            onTranscriptSegment({ text: msg.text, start_time: msg.start_time, end_time: msg.end_time });
+          }
+        } catch {
+          // ignore non-JSON messages
+        }
       };
 
       ws.onclose = () => {
@@ -141,6 +161,11 @@
     const sec = s % 60;
     return [h, m, sec].map((v) => String(v).padStart(2, '0')).join(':');
   }
+
+  // Notify parent of recording state changes
+  $effect(() => {
+    onRecordingStateChange?.(recordingState, elapsed);
+  });
 
   let canRecord = $derived(status === 'draft' || status === 'recording');
   let isLocked = $derived(isRecordingLocked());

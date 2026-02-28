@@ -1,5 +1,7 @@
 <script lang="ts">
   import { api } from '../lib/api';
+  import ConfirmDialog from './ConfirmDialog.svelte';
+  import Spinner from './Spinner.svelte';
 
   type Props = { sessionId: number };
   let { sessionId }: Props = $props();
@@ -21,6 +23,19 @@
   let editContent = $state('');
   let ollamaOk = $state<boolean | null>(null);
   let ollamaMsg = $state('');
+  let confirmRegenType = $state<string | null>(null);
+  let confirmDeleteId = $state<number | null>(null);
+  let genElapsed = $state(0);
+  let genTimer: ReturnType<typeof setInterval> | null = null;
+
+  function startGenTimer() {
+    genElapsed = 0;
+    genTimer = setInterval(() => { genElapsed += 1; }, 1000);
+  }
+
+  function stopGenTimer() {
+    if (genTimer) { clearInterval(genTimer); genTimer = null; }
+  }
 
   async function load() {
     summaries = await api.get<Summary[]>(`/sessions/${sessionId}/summaries`);
@@ -40,6 +55,7 @@
   async function generateFull() {
     loading = true;
     error = null;
+    startGenTimer();
     try {
       await api.post(`/sessions/${sessionId}/generate-summary`, { type: 'full' });
       await load();
@@ -47,12 +63,14 @@
       error = e.message;
     } finally {
       loading = false;
+      stopGenTimer();
     }
   }
 
   async function generatePov() {
     loading = true;
     error = null;
+    startGenTimer();
     try {
       await api.post(`/sessions/${sessionId}/generate-summary`, { type: 'pov' });
       await load();
@@ -60,13 +78,15 @@
       error = e.message;
     } finally {
       loading = false;
+      stopGenTimer();
     }
   }
 
   async function regenerate(type: string) {
-    if (!confirm(`Regenerate ${type} summaries? This will replace existing ones.`)) return;
+    confirmRegenType = null;
     loading = true;
     error = null;
+    startGenTimer();
     try {
       await api.post(`/sessions/${sessionId}/regenerate-summary`, { type });
       await load();
@@ -74,6 +94,7 @@
       error = e.message;
     } finally {
       loading = false;
+      stopGenTimer();
     }
   }
 
@@ -90,8 +111,8 @@
   }
 
   async function deleteSummary(id: number) {
-    if (!confirm('Delete this summary?')) return;
     await api.del(`/summaries/${id}`);
+    confirmDeleteId = null;
     await load();
   }
 
@@ -116,10 +137,18 @@
 
   <div class="actions">
     <button class="btn btn-primary" onclick={generateFull} disabled={loading || ollamaOk === false}>
-      {loading ? 'Generating...' : 'Generate Summary'}
+      {#if loading}
+        <Spinner size="14px" /> Generating... ({genElapsed}s)
+      {:else}
+        Generate Summary
+      {/if}
     </button>
     <button class="btn btn-primary" onclick={generatePov} disabled={loading || ollamaOk === false}>
-      {loading ? 'Generating...' : 'Generate POV Summaries'}
+      {#if loading}
+        <Spinner size="14px" /> Generating... ({genElapsed}s)
+      {:else}
+        Generate POV Summaries
+      {/if}
     </button>
   </div>
 
@@ -141,8 +170,8 @@
           </div>
           <div class="btn-group">
             <button class="btn btn-sm" onclick={() => startEdit(s)}>Edit</button>
-            <button class="btn btn-sm" onclick={() => regenerate('full')}>Regenerate</button>
-            <button class="btn btn-sm btn-danger" onclick={() => deleteSummary(s.id)}>Delete</button>
+            <button class="btn btn-sm" onclick={() => (confirmRegenType = 'full')}>Regenerate</button>
+            <button class="btn btn-sm btn-danger" onclick={() => (confirmDeleteId = s.id)}>Delete</button>
           </div>
         {/if}
       </div>
@@ -168,18 +197,38 @@
           </div>
           <div class="btn-group">
             <button class="btn btn-sm" onclick={() => startEdit(s)}>Edit</button>
-            <button class="btn btn-sm btn-danger" onclick={() => deleteSummary(s.id)}>Delete</button>
+            <button class="btn btn-sm btn-danger" onclick={() => (confirmDeleteId = s.id)}>Delete</button>
           </div>
         {/if}
       </div>
     {/each}
-    <button class="btn btn-sm" onclick={() => regenerate('pov')}>Regenerate All POV</button>
+    <button class="btn btn-sm" onclick={() => (confirmRegenType = 'pov')}>Regenerate All POV</button>
   {/if}
 
   {#if summaries.length === 0 && !loading}
-    <p class="empty">No summaries generated yet.</p>
+    <p class="empty">No summaries generated yet. Generate a summary after your session is transcribed.</p>
   {/if}
 </div>
+
+{#if confirmRegenType !== null}
+  <ConfirmDialog
+    title="Regenerate Summaries"
+    message="This will replace existing {confirmRegenType} summaries with newly generated ones."
+    confirmLabel="Regenerate"
+    onconfirm={() => regenerate(confirmRegenType!)}
+    oncancel={() => (confirmRegenType = null)}
+  />
+{/if}
+
+{#if confirmDeleteId !== null}
+  <ConfirmDialog
+    title="Delete Summary"
+    message="Are you sure you want to delete this summary?"
+    confirmLabel="Delete"
+    onconfirm={() => deleteSummary(confirmDeleteId!)}
+    oncancel={() => (confirmDeleteId = null)}
+  />
+{/if}
 
 <style>
   .summary-section {

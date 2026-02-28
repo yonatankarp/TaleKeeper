@@ -2,21 +2,27 @@
   import { api } from '../lib/api';
   import { navigate } from '../lib/router.svelte';
   import LanguageSelect from '../components/LanguageSelect.svelte';
+  import Spinner from '../components/Spinner.svelte';
+  import ConfirmDialog from '../components/ConfirmDialog.svelte';
 
   type Props = { campaignId: number };
   let { campaignId }: Props = $props();
 
   type Campaign = { id: number; name: string; description: string; language: string };
-  type Session = { id: number; name: string; date: string; status: string };
+  type Session = { id: number; name: string; date: string; status: string; audio_path: string | null };
   type Dashboard = { session_count: number; total_recorded_time: number; most_recent_session_date: string | null };
 
   let campaign = $state<Campaign | null>(null);
   let sessions = $state<Session[]>([]);
   let dashboard = $state<Dashboard | null>(null);
+  let pageLoading = $state(true);
   let showNewSession = $state(false);
   let newSessionName = $state('');
   let newSessionDate = $state(new Date().toISOString().split('T')[0]);
   let newSessionLang = $state('en');
+  let confirmDeleteSessionId = $state<number | null>(null);
+  let confirmDeleteCampaign = $state(false);
+  let sessionNameError = $state(false);
 
   async function load() {
     [campaign, sessions, dashboard] = await Promise.all([
@@ -24,10 +30,15 @@
       api.get<Session[]>(`/campaigns/${campaignId}/sessions`),
       api.get<Dashboard>(`/campaigns/${campaignId}/dashboard`),
     ]);
+    pageLoading = false;
   }
 
   async function createSession() {
-    if (!newSessionName.trim()) return;
+    if (!newSessionName.trim()) {
+      sessionNameError = true;
+      return;
+    }
+    sessionNameError = false;
     await api.post(`/campaigns/${campaignId}/sessions`, {
       name: newSessionName,
       date: newSessionDate,
@@ -39,14 +50,14 @@
   }
 
   async function deleteSession(id: number) {
-    if (!confirm('Delete this session and all its data?')) return;
     await api.del(`/sessions/${id}`);
+    confirmDeleteSessionId = null;
     await load();
   }
 
   async function deleteCampaign() {
-    if (!confirm('Delete this campaign and all its sessions? This cannot be undone.')) return;
     await api.del(`/campaigns/${campaignId}`);
+    confirmDeleteCampaign = false;
     navigate('/');
   }
 
@@ -76,6 +87,9 @@
   });
 </script>
 
+{#if pageLoading}
+  <div class="loading"><Spinner /> Loading campaign...</div>
+{:else}
 <div class="page">
   {#if campaign}
     <div class="page-header">
@@ -87,8 +101,13 @@
       </div>
       <div class="btn-group">
         <button class="btn" onclick={() => navigate(`/campaigns/${campaignId}/roster`)}>Roster</button>
-        <button class="btn btn-primary" onclick={() => (showNewSession = true)}>New Session</button>
-        <button class="btn btn-danger" onclick={deleteCampaign}>Delete Campaign</button>
+        {#if sessions.length > 0}
+          <button class="btn" onclick={() => navigate(`/sessions/${sessions[0].id}`)}>Continue Last Session</button>
+        {/if}
+        <button class="btn btn-primary" onclick={() => (showNewSession = true)}>
+          {sessions.length === 0 ? 'Start First Session' : 'New Session'}
+        </button>
+        <button class="btn btn-danger" onclick={() => (confirmDeleteCampaign = true)}>Delete Campaign</button>
       </div>
     </div>
 
@@ -111,7 +130,8 @@
 
     {#if showNewSession}
       <div class="card form-card">
-        <input type="text" placeholder="Session name" bind:value={newSessionName} />
+        <input type="text" placeholder="Session name" bind:value={newSessionName} class:input-error={sessionNameError} oninput={() => (sessionNameError = false)} />
+        {#if sessionNameError}<p class="field-error">Session name is required</p>{/if}
         <input type="date" bind:value={newSessionDate} />
         <label class="field-label">Language</label>
         <LanguageSelect value={newSessionLang} onchange={(code) => (newSessionLang = code)} />
@@ -132,19 +152,52 @@
           </button>
           <div class="session-actions">
             <span class="badge {statusBadgeClass(s.status)}">{s.status}</span>
-            <button class="btn btn-sm btn-danger" onclick={() => deleteSession(s.id)}>Delete</button>
+            {#if s.audio_path}
+              <span class="badge badge-audio">Audio</span>
+            {/if}
+            <button class="btn btn-sm btn-danger" onclick={() => (confirmDeleteSessionId = s.id)}>Delete</button>
           </div>
         </div>
       {/each}
     </div>
 
     {#if sessions.length === 0}
-      <p class="empty">No sessions yet. Start your first session!</p>
+      <p class="empty">No sessions yet. Create a session to begin recording your next game.</p>
     {/if}
   {/if}
 </div>
+{/if}
+
+{#if confirmDeleteSessionId !== null}
+  <ConfirmDialog
+    title="Delete Session"
+    message="This will delete this session and all its audio, transcript, and summaries."
+    confirmLabel="Delete"
+    onconfirm={() => deleteSession(confirmDeleteSessionId!)}
+    oncancel={() => (confirmDeleteSessionId = null)}
+  />
+{/if}
+
+{#if confirmDeleteCampaign}
+  <ConfirmDialog
+    title="Delete Campaign"
+    message="This will permanently delete this campaign and all its sessions, transcripts, and audio. This cannot be undone."
+    confirmLabel="Delete"
+    onconfirm={deleteCampaign}
+    oncancel={() => (confirmDeleteCampaign = false)}
+  />
+{/if}
 
 <style>
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 3rem;
+    color: var(--text-muted);
+  }
+
   .page-header {
     display: flex;
     justify-content: space-between;
@@ -215,6 +268,7 @@
   .badge-recording { background: var(--accent); color: #fff; }
   .badge-transcribing { background: var(--warning); color: var(--bg-body); }
   .badge-completed { background: var(--success); color: #fff; }
+  .badge-audio { background: var(--btn-blue); color: #fff; }
 
   .card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
   .form-card { margin-bottom: 1.5rem; }
@@ -254,6 +308,9 @@
     color: var(--text-muted);
     margin-bottom: 0.25rem;
   }
+
+  .input-error { border-color: var(--accent) !important; }
+  .field-error { color: var(--accent); font-size: 0.8rem; margin: -0.25rem 0 0.5rem; }
 
   .empty { text-align: center; color: var(--text-muted); margin-top: 2rem; }
 </style>

@@ -6,7 +6,7 @@
   import RosterPage from './routes/RosterPage.svelte';
   import SettingsPage from './routes/SettingsPage.svelte';
   import SetupWizard from './components/SetupWizard.svelte';
-  import { matchRoute } from './lib/router.svelte';
+  import { matchRoute, navigate } from './lib/router.svelte';
   import { api } from './lib/api';
   import './lib/theme.svelte';
 
@@ -23,8 +23,51 @@
   let showWizard = $state(false);
   let globalError = $state<string | null>(null);
 
+  // Breadcrumb state
+  type Crumb = { label: string; path: string | null };
+  let breadcrumbs = $state<Crumb[]>([]);
+
   function onHashChange() {
     currentPath = window.location.hash.slice(1) || '/';
+  }
+
+  async function updateBreadcrumbs() {
+    if (!matched || matched.name === 'campaigns') {
+      breadcrumbs = [];
+      return;
+    }
+
+    const crumbs: Crumb[] = [{ label: 'Campaigns', path: '/' }];
+
+    if (matched.name === 'settings') {
+      crumbs.push({ label: 'Settings', path: null });
+    } else if (matched.name === 'campaign') {
+      try {
+        const campaign = await api.get<{ name: string }>(`/campaigns/${matched.params.id}`);
+        crumbs.push({ label: campaign.name, path: null });
+      } catch {
+        crumbs.push({ label: 'Campaign', path: null });
+      }
+    } else if (matched.name === 'roster') {
+      try {
+        const campaign = await api.get<{ name: string }>(`/campaigns/${matched.params.id}`);
+        crumbs.push({ label: campaign.name, path: `/campaigns/${matched.params.id}` });
+        crumbs.push({ label: 'Roster', path: null });
+      } catch {
+        crumbs.push({ label: 'Roster', path: null });
+      }
+    } else if (matched.name === 'session') {
+      try {
+        const session = await api.get<{ name: string; campaign_id: number }>(`/sessions/${matched.params.id}`);
+        const campaign = await api.get<{ name: string }>(`/campaigns/${session.campaign_id}`);
+        crumbs.push({ label: campaign.name, path: `/campaigns/${session.campaign_id}` });
+        crumbs.push({ label: session.name, path: null });
+      } catch {
+        crumbs.push({ label: 'Session', path: null });
+      }
+    }
+
+    breadcrumbs = crumbs;
   }
 
   async function checkFirstRun() {
@@ -45,6 +88,7 @@
   }
 
   $effect(() => { checkFirstRun(); });
+  $effect(() => { matched; updateBreadcrumbs(); });
 </script>
 
 <svelte:window onhashchange={onHashChange} onunhandledrejection={handleError} />
@@ -61,6 +105,21 @@
   <Sidebar />
 
   <main class="main-content">
+    {#if breadcrumbs.length > 0}
+      <nav class="breadcrumbs">
+        {#each breadcrumbs as crumb, i}
+          {#if i > 0}
+            <span class="separator">/</span>
+          {/if}
+          {#if crumb.path !== null}
+            <button class="crumb-link" onclick={() => navigate(crumb.path!)}>{crumb.label}</button>
+          {:else}
+            <span class="crumb-current">{crumb.label}</span>
+          {/if}
+        {/each}
+      </nav>
+    {/if}
+
     {#if !matched || matched.name === 'campaigns'}
       <CampaignList />
     {:else if matched.name === 'campaign'}
@@ -92,6 +151,36 @@
     flex: 1;
     padding: 2rem;
     overflow-y: auto;
+  }
+
+  .breadcrumbs {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 1rem;
+    font-size: 0.85rem;
+  }
+
+  .crumb-link {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 0;
+    font: inherit;
+    font-size: 0.85rem;
+  }
+
+  .crumb-link:hover {
+    text-decoration: underline;
+  }
+
+  .separator {
+    color: var(--text-muted);
+  }
+
+  .crumb-current {
+    color: var(--text-muted);
   }
 
   .global-toast {

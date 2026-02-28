@@ -9,9 +9,12 @@
 
   let speakers = $state<Speaker[]>([]);
   let roster = $state<RosterEntry[]>([]);
-  let editingId = $state<number | null>(null);
-  let editPlayer = $state('');
-  let editCharacter = $state('');
+  let editing = $state(false);
+  let saving = $state(false);
+  let error = $state<string | null>(null);
+
+  // Batch edit state: maps speaker id to { player_name, character_name }
+  let edits = $state<Record<number, { player_name: string; character_name: string }>>({});
 
   async function load() {
     const [suggestionsResp, rosterResp] = await Promise.all([
@@ -22,30 +25,54 @@
     roster = rosterResp.filter(r => r.is_active);
   }
 
-  function startEdit(s: Speaker) {
-    editingId = s.id;
-    editPlayer = s.player_name ?? '';
-    editCharacter = s.character_name ?? '';
+  function startBatchEdit() {
+    const map: Record<number, { player_name: string; character_name: string }> = {};
+    for (const s of speakers) {
+      map[s.id] = { player_name: s.player_name ?? '', character_name: s.character_name ?? '' };
+    }
+    edits = map;
+    editing = true;
+    error = null;
   }
 
-  async function saveEdit() {
-    if (editingId === null) return;
-    await api.put(`/speakers/${editingId}`, {
-      player_name: editPlayer,
-      character_name: editCharacter,
-    });
-    editingId = null;
-    await load();
-    onUpdate();
+  function cancelBatchEdit() {
+    editing = false;
+    edits = {};
+    error = null;
   }
 
-  function selectFromRoster(entry: RosterEntry) {
-    editPlayer = entry.player_name;
-    editCharacter = entry.character_name;
+  function selectFromRoster(speakerId: number, entry: RosterEntry) {
+    edits[speakerId] = { player_name: entry.player_name, character_name: entry.character_name };
+  }
+
+  async function saveAll() {
+    saving = true;
+    error = null;
+    try {
+      const promises = speakers.map(s =>
+        api.put(`/speakers/${s.id}`, {
+          player_name: edits[s.id]?.player_name ?? '',
+          character_name: edits[s.id]?.character_name ?? '',
+        })
+      );
+      await Promise.all(promises);
+      editing = false;
+      edits = {};
+      await load();
+      onUpdate();
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to save speakers';
+      // Reload to show any partial updates
+      await load();
+    } finally {
+      saving = false;
+    }
   }
 
   function speakerDisplay(s: Speaker): string {
     if (s.character_name && s.player_name) return `${s.character_name} (${s.player_name})`;
+    if (s.character_name) return s.character_name;
+    if (s.player_name) return s.player_name;
     return s.diarization_label;
   }
 
@@ -61,36 +88,55 @@
 </script>
 
 <div class="speaker-panel">
-  <h4>Speakers</h4>
-  {#each speakers as s}
-    <div class="speaker-row">
-      {#if editingId === s.id}
-        <div class="edit-form">
-          <input type="text" placeholder="Player name" bind:value={editPlayer} />
-          <input type="text" placeholder="Character name" bind:value={editCharacter} />
-          {#if roster.length > 0}
-            <div class="roster-suggestions">
-              {#each roster as r}
-                <button class="roster-btn" onclick={() => selectFromRoster(r)}>
-                  {r.character_name} ({r.player_name})
-                </button>
-              {/each}
-            </div>
-          {/if}
-          <div class="btn-group">
-            <button class="btn btn-primary btn-sm" onclick={saveEdit}>Save</button>
-            <button class="btn btn-sm" onclick={() => (editingId = null)}>Cancel</button>
+  <div class="panel-header">
+    <h4>Speakers</h4>
+    {#if speakers.length > 0 && !editing}
+      <button class="btn btn-sm" onclick={startBatchEdit}>Edit All</button>
+    {/if}
+  </div>
+
+  {#if error}
+    <div class="error">{error}</div>
+  {/if}
+
+  {#if editing}
+    <div class="batch-form">
+      {#each speakers as s}
+        <div class="batch-row">
+          <span class="speaker-badge" style="background: {speakerColor(s.diarization_label)}">
+            {s.diarization_label}
+          </span>
+          <div class="batch-inputs">
+            <input type="text" placeholder="Player name" bind:value={edits[s.id].player_name} />
+            <input type="text" placeholder="Character name" bind:value={edits[s.id].character_name} />
+            {#if roster.length > 0}
+              <div class="roster-suggestions">
+                {#each roster as r}
+                  <button class="roster-btn" onclick={() => selectFromRoster(s.id, r)}>
+                    {r.character_name} ({r.player_name})
+                  </button>
+                {/each}
+              </div>
+            {/if}
           </div>
         </div>
-      {:else}
-        <button class="speaker-label-btn" onclick={() => startEdit(s)}>
-          <span class="speaker-badge" style="background: {speakerColor(s.diarization_label)}">
-            {speakerDisplay(s)}
-          </span>
+      {/each}
+      <div class="btn-group">
+        <button class="btn btn-primary" onclick={saveAll} disabled={saving}>
+          {saving ? 'Saving...' : 'Save All'}
         </button>
-      {/if}
+        <button class="btn" onclick={cancelBatchEdit} disabled={saving}>Cancel</button>
+      </div>
     </div>
-  {/each}
+  {:else}
+    {#each speakers as s}
+      <div class="speaker-row">
+        <span class="speaker-badge" style="background: {speakerColor(s.diarization_label)}">
+          {speakerDisplay(s)}
+        </span>
+      </div>
+    {/each}
+  {/if}
 
   {#if speakers.length === 0}
     <p class="empty">No speakers detected yet.</p>
@@ -106,16 +152,26 @@
     margin-bottom: 1rem;
   }
 
-  h4 { margin: 0 0 0.75rem; }
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+  }
+
+  .panel-header h4 { margin: 0; }
+
+  .error {
+    background: var(--error-bg);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    margin-bottom: 0.75rem;
+  }
 
   .speaker-row { margin-bottom: 0.5rem; }
-
-  .speaker-label-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 0;
-  }
 
   .speaker-badge {
     display: inline-block;
@@ -126,10 +182,28 @@
     font-weight: 600;
   }
 
-  .edit-form {
+  .batch-form {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: 0.75rem;
+  }
+
+  .batch-row {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+  }
+
+  .batch-row .speaker-badge {
+    flex-shrink: 0;
+    margin-top: 0.3rem;
+  }
+
+  .batch-inputs {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
   }
 
   .roster-suggestions {
@@ -170,6 +244,7 @@
   }
 
   .btn:hover { background: var(--bg-hover); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn-sm { padding: 0.25rem 0.5rem; }
   .btn-group { display: flex; gap: 0.5rem; }

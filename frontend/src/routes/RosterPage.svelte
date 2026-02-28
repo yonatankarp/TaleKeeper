@@ -1,5 +1,7 @@
 <script lang="ts">
   import { api } from '../lib/api';
+  import Spinner from '../components/Spinner.svelte';
+  import ConfirmDialog from '../components/ConfirmDialog.svelte';
 
   type Props = { campaignId: number };
   let { campaignId }: Props = $props();
@@ -7,14 +9,17 @@
   type RosterEntry = { id: number; player_name: string; character_name: string; is_active: number };
 
   let entries = $state<RosterEntry[]>([]);
+  let pageLoading = $state(true);
   let newPlayer = $state('');
   let newCharacter = $state('');
   let editingId = $state<number | null>(null);
   let editPlayer = $state('');
   let editCharacter = $state('');
+  let confirmRemoveId = $state<number | null>(null);
 
   async function load() {
     entries = await api.get<RosterEntry[]>(`/campaigns/${campaignId}/roster`);
+    pageLoading = false;
   }
 
   async function add() {
@@ -50,14 +55,17 @@
   }
 
   async function remove(id: number) {
-    if (!confirm('Remove this roster entry?')) return;
     await api.del(`/roster/${id}`);
+    confirmRemoveId = null;
     await load();
   }
 
   $effect(() => { load(); });
 </script>
 
+{#if pageLoading}
+  <div class="loading"><Spinner /> Loading roster...</div>
+{:else}
 <div class="page">
   <h2>Player Roster</h2>
 
@@ -90,7 +98,7 @@
               {e.is_active ? 'Deactivate' : 'Activate'}
             </button>
             <button class="btn btn-sm" onclick={() => startEdit(e)}>Edit</button>
-            <button class="btn btn-sm btn-danger" onclick={() => remove(e.id)}>Remove</button>
+            <button class="btn btn-sm btn-danger" onclick={() => (confirmRemoveId = e.id)}>Remove</button>
           </div>
         {/if}
       </div>
@@ -98,11 +106,31 @@
   </div>
 
   {#if entries.length === 0}
-    <p class="empty">No players in the roster yet.</p>
+    <p class="empty">No players in the roster yet. Add your party members above to use them for speaker identification.</p>
   {/if}
 </div>
+{/if}
+
+{#if confirmRemoveId !== null}
+  <ConfirmDialog
+    title="Remove Roster Entry"
+    message="Remove this player and character from the roster?"
+    confirmLabel="Remove"
+    onconfirm={() => remove(confirmRemoveId!)}
+    oncancel={() => (confirmRemoveId = null)}
+  />
+{/if}
 
 <style>
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 3rem;
+    color: var(--text-muted);
+  }
+
   .add-form { margin-bottom: 1.5rem; }
 
   .form-row {
