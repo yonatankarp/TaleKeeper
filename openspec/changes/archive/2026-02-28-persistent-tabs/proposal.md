@@ -1,25 +1,25 @@
+# Persistent Tabs
+
 ## Why
 
-SessionDetail uses conditional rendering (`{#if}`) for tab content, which destroys and recreates components on tab switch. This kills active recording (MediaRecorder, WebSocket, timer) when navigating to the transcript tab. Users need to check live transcription while recording without interrupting the session.
+Switching tabs in SessionDetail destroys and recreates components via `{#if}`/`{:else if}` conditional rendering. This kills active recording (MediaRecorder, WebSocket, timer) when the user navigates to the transcript tab to check live transcription.
 
 ## What Changes
 
-- Replace `{#if}`/`{:else if}` conditional rendering in SessionDetail with CSS visibility toggling (`display: none`) so all tab components remain mounted
-- Inactive tab content is hidden visually but stays alive in the DOM
-- No changes to child components (RecordingControls, TranscriptView, SummarySection, ExportSection)
+- Replace conditional rendering with CSS visibility toggling in SessionDetail
+- All tab content components remain mounted; inactive tabs hidden with `display: none`
+- Recording UI stays alive in background when viewing other tabs
 
 ## Capabilities
 
 ### New Capabilities
-
-None — this is a rendering strategy change within existing UI, not a new capability.
+- `session-tabs`: Persistent tab rendering that preserves component state
 
 ### Modified Capabilities
-
-None — no spec-level behavior changes. All existing capabilities (audio-capture, transcription, etc.) retain their requirements. This change only affects how the session view mounts/unmounts tab components.
+- None
 
 ## Impact
 
-- **Code**: `frontend/src/routes/SessionDetail.svelte` — tab content rendering logic and CSS
-- **Behavior**: All 4 tab components stay mounted simultaneously (negligible memory overhead). Transcript live-updates continue in background. Summary/export tabs retain state across switches.
-- **No API, dependency, or backend changes.**
+- Single file change: `frontend/src/routes/SessionDetail.svelte`
+- No changes to child components
+- No new stores, contexts, or state management
