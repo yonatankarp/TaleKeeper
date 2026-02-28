@@ -36,12 +36,12 @@ def unload_model() -> None:
     _model_size = None
 
 
-def transcribe(wav_path: Path, model_size: str = "medium") -> list[TranscriptSegment]:
+def transcribe(wav_path: Path, model_size: str = "medium", language: str = "en") -> list[TranscriptSegment]:
     """Transcribe a WAV file and return segments with timestamps."""
     model = get_model(model_size)
     segments, _ = model.transcribe(
         str(wav_path),
-        language="en",
+        language=language,
         beam_size=5,
         vad_filter=True,
     )
@@ -58,12 +58,12 @@ def transcribe(wav_path: Path, model_size: str = "medium") -> list[TranscriptSeg
     return results
 
 
-def transcribe_stream(wav_path: Path, model_size: str = "medium") -> Iterator[TranscriptSegment]:
+def transcribe_stream(wav_path: Path, model_size: str = "medium", language: str = "en") -> Iterator[TranscriptSegment]:
     """Stream transcription segments as they are produced."""
     model = get_model(model_size)
     segments, _ = model.transcribe(
         str(wav_path),
-        language="en",
+        language=language,
         beam_size=5,
         vad_filter=True,
     )
