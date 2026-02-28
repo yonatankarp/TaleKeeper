@@ -5,6 +5,7 @@
   import AudioPlayer from '../components/AudioPlayer.svelte';
   import SummarySection from '../components/SummarySection.svelte';
   import ExportSection from '../components/ExportSection.svelte';
+  import SpeakerPanel from '../components/SpeakerPanel.svelte';
   import Spinner from '../components/Spinner.svelte';
 
   type Props = { sessionId: number };
@@ -58,8 +59,8 @@
   const tabs = ['recording', 'transcript', 'summaries', 'export'] as const;
   const tabLabels: Record<string, string> = {
     recording: 'Recording',
-    transcript: 'Transcript',
-    summaries: 'Summaries',
+    transcript: 'Chronicle',
+    summaries: 'Tales',
     export: 'Export',
   };
 
@@ -101,6 +102,15 @@
           class:active={activeTab === tab}
           onclick={() => (activeTab = tab)}
         >
+          {#if tab === 'recording'}
+            <svg class="tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 23a1 1 0 01-1-1v-4h2v4a1 1 0 01-1 1zm0-7c-1.5 0-2.5-1-2.5-2.5 0-1 .5-2.3 1.2-3.7.4-.7.8-1.5 1.3-2.5.5 1 .9 1.8 1.3 2.5.7 1.4 1.2 2.7 1.2 3.7 0 1.5-1 2.5-2.5 2.5zM12 2S7 8.5 7 13.5C7 16.5 9.2 19 12 19s5-2.5 5-5.5C17 8.5 12 2 12 2z"/></svg>
+          {:else if tab === 'transcript'}
+            <svg class="tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2 2 0 012 2v2a2 2 0 01-2 2H7a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2"/><path d="M8 7V5a2 2 0 00-2-2"/><path d="M16 17v2a2 2 0 002 2"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="14" x2="13" y2="14"/></svg>
+          {:else if tab === 'summaries'}
+            <svg class="tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
+          {:else if tab === 'export'}
+            <svg class="tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 7l-10 7L2 7"/></svg>
+          {/if}
           {tabLabels[tab]} <span class="tab-hint">{i + 1}</span>
         </button>
       {/each}
@@ -111,6 +121,9 @@
         <RecordingControls sessionId={sessionId} status={session.status} onStatusChange={load} onRecordingStateChange={handleRecordingStateChange} onTranscriptSegment={handleTranscriptSegment} />
       </div>
       <div class:hidden={activeTab !== 'transcript'}>
+        {#if session}
+          <SpeakerPanel sessionId={sessionId} campaignId={session.campaign_id} onUpdate={() => {}} />
+        {/if}
         {#if hasAudio}
           <AudioPlayer bind:this={audioPlayer} sessionId={sessionId} />
         {/if}
@@ -160,7 +173,7 @@
     gap: 0.5rem;
     padding: 0.25rem 0.75rem;
     background: var(--bg-surface);
-    border: 1px solid var(--accent);
+    border: 1px solid var(--danger);
     border-radius: 16px;
     font-size: 0.8rem;
   }
@@ -168,7 +181,7 @@
   .rec-dot {
     width: 8px;
     height: 8px;
-    background: var(--accent);
+    background: var(--danger);
     border-radius: 50%;
   }
 
@@ -187,7 +200,7 @@
   }
 
   .rec-label {
-    color: var(--accent);
+    color: var(--danger);
     font-weight: 700;
     text-transform: uppercase;
   }
@@ -214,6 +227,7 @@
     gap: 0.4rem;
   }
 
+  .tab-icon { color: var(--accent); flex-shrink: 0; }
   .tab:hover { color: var(--text); }
   .tab.active {
     color: var(--accent);

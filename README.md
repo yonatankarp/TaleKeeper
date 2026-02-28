@@ -16,15 +16,6 @@ TaleKeeper captures audio from your game table, transcribes speech on-device usi
   ```
   brew install ollama
   ```
-- **Hugging Face token** — required for speaker diarization (pyannote model)
-  1. Create a free account at https://huggingface.co
-  2. Accept the model license at https://huggingface.co/pyannote/speaker-diarization-3.1
-  3. Create a token at https://huggingface.co/settings/tokens (read access is sufficient)
-  4. Set the environment variable before running:
-     ```
-     export HF_TOKEN=hf_your_token_here
-     ```
-
 ## Quick Start
 
 ### 1. Clone and install
@@ -87,12 +78,6 @@ docker compose exec ollama ollama pull llama3.1:8b
 ```
 
 Data is persisted via bind-mounts (`./data/db` and `./data/audio`) and a named volume for Ollama models, so nothing is lost when containers restart.
-
-To pass a Hugging Face token (required for speaker diarization models), set it before starting:
-
-```bash
-HF_TOKEN=hf_... docker compose up -d --build
-```
 
 ## Development
 

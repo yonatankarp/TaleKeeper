@@ -8,7 +8,6 @@ services:
       - ./data/audio:/app/data/audio
     environment:
       - OLLAMA_URL=http://ollama:11434
-      - HF_TOKEN=${HF_TOKEN:-}
       - TALEKEEPER_SECRET=${TALEKEEPER_SECRET:-}
     depends_on:
       - ollama

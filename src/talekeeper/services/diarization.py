@@ -1,9 +1,51 @@
-"""Speaker diarization service using pyannote-audio."""
+"""Speaker diarization service using SpeechBrain embeddings + clustering."""
+
+# Shims for SpeechBrain 1.0.x compatibility with newer dependencies.
+# 1) torchaudio >=2.9 removed list_audio_backends()
+# 2) huggingface_hub >=1.0 removed the use_auth_token parameter
+try:
+    import torchaudio as _torchaudio
+
+    if not hasattr(_torchaudio, "list_audio_backends"):
+        _torchaudio.list_audio_backends = lambda: ["ffmpeg"]
+except ImportError:
+    pass
+
+import huggingface_hub as _hfh
+from requests import HTTPError as _HTTPError
+
+_orig_hf_hub_download = _hfh.hf_hub_download
+
+
+def _patched_hf_hub_download(*args, **kwargs):
+    # SpeechBrain 1.0.x passes use_auth_token; huggingface_hub >=1.0 removed it.
+    kwargs.pop("use_auth_token", None)
+    # SpeechBrain 1.0.x also passes removed local_dir_use_symlinks/force_filename.
+    kwargs.pop("local_dir_use_symlinks", None)
+    kwargs.pop("force_filename", None)
+    try:
+        return _orig_hf_hub_download(*args, **kwargs)
+    except _hfh.errors.EntryNotFoundError as e:
+        # SpeechBrain expects HTTPError for 404s, not EntryNotFoundError.
+        raise _HTTPError(f"404 Client Error: {e}") from e
+
+
+_hfh.hf_hub_download = _patched_hf_hub_download
 
 from dataclasses import dataclass
 from pathlib import Path
 
-_pipeline = None
+import numpy as np
+
+# Tunable constants
+WINDOW_SIZE_SEC = 1.5
+HOP_SIZE_SEC = 0.75
+COSINE_DISTANCE_THRESHOLD = 0.7
+SAMPLE_RATE = 16_000
+MIN_WINDOW_SAMPLES = int(0.4 * SAMPLE_RATE)
+SILENCE_RMS_THRESHOLD = 0.01
+
+_encoder = None
 
 
 @dataclass
@@ -13,69 +55,181 @@ class SpeakerSegment:
     end_time: float
 
 
-def get_pipeline():
-    """Load and cache the pyannote-audio diarization pipeline."""
-    global _pipeline
-    if _pipeline is not None:
-        return _pipeline
+def _get_encoder():
+    """Load and cache the SpeechBrain ECAPA-TDNN encoder."""
+    global _encoder
+    if _encoder is not None:
+        return _encoder
 
-    import os
-    from pyannote.audio import Pipeline
     import torch
+    from speechbrain.inference.speaker import EncoderClassifier
 
-    token = os.environ.get("HF_TOKEN")
-    if not token:
-        raise RuntimeError("HF_TOKEN environment variable is required for speaker diarization. Get one at https://huggingface.co/settings/tokens")
+    # Select best available device
+    device = "cpu"
+    try:
+        if torch.backends.mps.is_available():
+            device = "mps"
+        elif torch.cuda.is_available():
+            device = "cuda"
+    except Exception:
+        pass
 
-    _pipeline = Pipeline.from_pretrained(
-        "pyannote/speaker-diarization-3.1",
-        token=token,
+    _encoder = EncoderClassifier.from_hparams(
+        source="speechbrain/spkrec-ecapa-voxceleb",
+        savedir="data/models/spkrec-ecapa-voxceleb",
+        run_opts={"device": device},
     )
 
-    # Use Metal acceleration on Apple Silicon if available
-    if torch.backends.mps.is_available():
-        _pipeline.to(torch.device("mps"))
+    return _encoder
 
-    return _pipeline
+
+def _load_waveform(wav_path: Path):
+    """Load audio, ensure mono, resample to 16kHz. Returns tensor [1, samples]."""
+    import torch
+    from scipy.io import wavfile
+    from scipy.signal import resample_poly
+    from math import gcd
+
+    sr, data = wavfile.read(str(wav_path))
+
+    # Convert to float32 in [-1, 1]
+    if data.dtype == np.int16:
+        data = data.astype(np.float32) / 32768.0
+    elif data.dtype == np.int32:
+        data = data.astype(np.float32) / 2147483648.0
+    elif data.dtype != np.float32:
+        data = data.astype(np.float32)
+
+    # Convert to mono
+    if data.ndim > 1:
+        data = data.mean(axis=1)
+
+    # Resample to 16kHz if needed
+    if sr != SAMPLE_RATE:
+        g = gcd(SAMPLE_RATE, sr)
+        data = resample_poly(data, SAMPLE_RATE // g, sr // g).astype(np.float32)
+
+    return torch.from_numpy(data).unsqueeze(0)
+
+
+def _extract_windowed_embeddings(waveform):
+    """Slide windows over waveform and extract speaker embeddings.
+
+    Returns (embeddings: np.ndarray[N, dim], timestamps: list[(start_sec, end_sec)]).
+    """
+    import torch
+
+    encoder = _get_encoder()
+    total_samples = waveform.shape[1]
+    window_samples = int(WINDOW_SIZE_SEC * SAMPLE_RATE)
+    hop_samples = int(HOP_SIZE_SEC * SAMPLE_RATE)
+
+    embeddings = []
+    timestamps = []
+    offset = 0
+
+    while offset < total_samples:
+        end = min(offset + window_samples, total_samples)
+        chunk = waveform[:, offset:end]
+
+        # Skip windows shorter than minimum
+        if chunk.shape[1] < MIN_WINDOW_SAMPLES:
+            break
+
+        # Skip silence
+        rms = torch.sqrt(torch.mean(chunk ** 2)).item()
+        if rms < SILENCE_RMS_THRESHOLD:
+            offset += hop_samples
+            continue
+
+        emb = encoder.encode_batch(chunk)
+        embeddings.append(emb.squeeze().cpu().numpy())
+        timestamps.append((offset / SAMPLE_RATE, end / SAMPLE_RATE))
+
+        offset += hop_samples
+
+    if not embeddings:
+        return np.empty((0, 0)), []
+
+    return np.stack(embeddings), timestamps
+
+
+def _cluster_embeddings(embeddings: np.ndarray, num_speakers: int | None = None) -> np.ndarray:
+    """Cluster embeddings into speaker groups. Returns label array."""
+    from sklearn.cluster import AgglomerativeClustering
+
+    n = len(embeddings)
+    if n <= 1:
+        return np.zeros(n, dtype=int)
+
+    if num_speakers is not None:
+        num_speakers = min(num_speakers, n)
+        clustering = AgglomerativeClustering(
+            n_clusters=num_speakers,
+            metric="cosine",
+            linkage="average",
+        )
+    else:
+        clustering = AgglomerativeClustering(
+            n_clusters=None,
+            distance_threshold=COSINE_DISTANCE_THRESHOLD,
+            metric="cosine",
+            linkage="average",
+        )
+
+    return clustering.fit_predict(embeddings)
+
+
+def _merge_segments(raw_segments: list[SpeakerSegment]) -> list[SpeakerSegment]:
+    """Merge adjacent segments with the same speaker label."""
+    if not raw_segments:
+        return []
+
+    merged = [raw_segments[0]]
+    for seg in raw_segments[1:]:
+        prev = merged[-1]
+        if seg.speaker_label == prev.speaker_label:
+            merged[-1] = SpeakerSegment(
+                speaker_label=prev.speaker_label,
+                start_time=prev.start_time,
+                end_time=max(prev.end_time, seg.end_time),
+            )
+        else:
+            merged.append(seg)
+
+    return merged
+
+
+def _run_pipeline(wav_path: Path, num_speakers: int | None = None) -> list[SpeakerSegment]:
+    """Full diarization pipeline: load -> window -> embed -> cluster -> merge."""
+    waveform = _load_waveform(wav_path)
+
+    embeddings, timestamps = _extract_windowed_embeddings(waveform)
+    if len(timestamps) == 0:
+        return []
+
+    labels = _cluster_embeddings(embeddings, num_speakers)
+
+    raw_segments = [
+        SpeakerSegment(
+            speaker_label=f"SPEAKER_{label:02d}",
+            start_time=start,
+            end_time=end,
+        )
+        for (start, end), label in zip(timestamps, labels)
+    ]
+
+    return _merge_segments(raw_segments)
 
 
 def diarize(wav_path: Path) -> list[SpeakerSegment]:
     """Run diarization on a WAV file and return speaker segments."""
-    pipeline = get_pipeline()
-    diarization = pipeline(str(wav_path))
-
-    results = []
-    for turn, _, speaker in diarization.itertracks(yield_label=True):
-        results.append(
-            SpeakerSegment(
-                speaker_label=speaker,
-                start_time=turn.start,
-                end_time=turn.end,
-            )
-        )
-    return results
+    return _run_pipeline(wav_path)
 
 
 def diarize_chunk(wav_path: Path, num_speakers: int | None = None) -> list[SpeakerSegment]:
     """Run diarization on a short audio chunk (e.g., 30s window)."""
-    pipeline = get_pipeline()
-
-    params = {}
-    if num_speakers is not None:
-        params["num_speakers"] = num_speakers
-
-    diarization = pipeline(str(wav_path), **params)
-
-    results = []
-    for turn, _, speaker in diarization.itertracks(yield_label=True):
-        results.append(
-            SpeakerSegment(
-                speaker_label=speaker,
-                start_time=turn.start,
-                end_time=turn.end,
-            )
-        )
-    return results
+    return _run_pipeline(wav_path, num_speakers)
 
 
 def align_speakers_with_transcript(
