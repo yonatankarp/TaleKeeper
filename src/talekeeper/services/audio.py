@@ -12,6 +12,20 @@ DEFAULT_CHUNK_DURATION_MS = 5 * 60 * 1000  # 5 minutes
 DEFAULT_OVERLAP_MS = 30 * 1000  # 30 seconds
 
 
+def audio_to_wav(audio_path: Path, wav_path: Path | None = None) -> Path:
+    """Convert any audio file to WAV for ML model input (auto-detects format).
+
+    Returns the path to the resulting WAV file.
+    """
+    if wav_path is None:
+        wav_path = audio_path.with_suffix(".wav")
+
+    audio = AudioSegment.from_file(str(audio_path))
+    audio = audio.set_channels(1).set_frame_rate(16000)
+    audio.export(str(wav_path), format="wav")
+    return wav_path
+
+
 def webm_to_wav(webm_path: Path, wav_path: Path | None = None) -> Path:
     """Convert WebM audio to WAV for ML model input.
 

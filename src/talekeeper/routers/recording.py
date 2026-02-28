@@ -2,11 +2,13 @@
 
 import asyncio
 import json
+import mimetypes
 import tempfile
 from pathlib import Path
+from typing import AsyncIterator
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, UploadFile, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi.responses import FileResponse, StreamingResponse
 
 from talekeeper.db import get_db
 
@@ -212,8 +214,169 @@ async def get_session_audio(session_id: int) -> FileResponse:
     if not audio_path.exists():
         raise HTTPException(status_code=404, detail="Audio file not found")
 
+    media_type = mimetypes.guess_type(str(audio_path))[0] or "application/octet-stream"
+
     return FileResponse(
         audio_path,
-        media_type="audio/webm",
+        media_type=media_type,
         headers={"Accept-Ranges": "bytes"},
     )
+
+
+@router.post("/api/sessions/{session_id}/upload-audio")
+async def upload_audio(session_id: int, file: UploadFile) -> dict:
+    """Accept a multipart audio file upload for a session."""
+    # Validate MIME type
+    content_type = file.content_type or ""
+    if not content_type.startswith("audio/"):
+        raise HTTPException(status_code=400, detail="Only audio files are accepted")
+
+    # Look up session
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT id, campaign_id, audio_path FROM sessions WHERE id = ?",
+            (session_id,),
+        )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session = dict(rows[0])
+    campaign_id = session["campaign_id"]
+
+    # Derive extension from uploaded filename
+    original_name = file.filename or ""
+    ext = Path(original_name).suffix if "." in original_name else ""
+    if not ext:
+        # Fallback: guess from content type
+        ext = mimetypes.guess_extension(content_type) or ""
+    if not ext:
+        ext = ".bin"
+
+    # If session already has audio, delete old file and clear transcript/speakers
+    old_audio_path = session.get("audio_path")
+    if old_audio_path:
+        old_path = Path(old_audio_path)
+        if old_path.exists():
+            old_path.unlink()
+        async with get_db() as db:
+            await db.execute(
+                "DELETE FROM transcript_segments WHERE session_id = ?", (session_id,)
+            )
+            await db.execute(
+                "DELETE FROM speakers WHERE session_id = ?", (session_id,)
+            )
+
+    # Save file to data/audio/{campaign_id}/{session_id}.{ext}
+    audio_dir = Path(f"data/audio/{campaign_id}")
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    audio_path = audio_dir / f"{session_id}{ext}"
+
+    with open(audio_path, "wb") as f:
+        while chunk := await file.read(1024 * 1024):  # 1MB chunks
+            f.write(chunk)
+
+    # Update session audio_path
+    async with get_db() as db:
+        await db.execute(
+            "UPDATE sessions SET audio_path = ?, updated_at = datetime('now') WHERE id = ?",
+            (str(audio_path), session_id),
+        )
+
+    return {"audio_path": str(audio_path)}
+
+
+def _sse_event(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+@router.post("/api/sessions/{session_id}/process-audio")
+async def process_audio(session_id: int) -> StreamingResponse:
+    """Run transcription + diarization on uploaded audio, streaming progress via SSE."""
+    from talekeeper.services.transcription import (
+        transcribe_chunked,
+        TranscriptSegment,
+        ChunkProgress,
+    )
+
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM sessions WHERE id = ?", (session_id,)
+        )
+        if not rows:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        session = dict(rows[0])
+        if not session.get("audio_path"):
+            raise HTTPException(status_code=400, detail="No audio for this session")
+
+        audio_path = Path(session["audio_path"])
+        if not audio_path.exists():
+            raise HTTPException(status_code=404, detail="Audio file not found")
+
+        language = session.get("language", "en")
+
+    async def sse_generator() -> AsyncIterator[str]:
+        segments_count = 0
+        try:
+            # Clear existing transcript/speakers and set status
+            async with get_db() as db:
+                await db.execute(
+                    "DELETE FROM transcript_segments WHERE session_id = ?", (session_id,)
+                )
+                await db.execute(
+                    "DELETE FROM speakers WHERE session_id = ?", (session_id,)
+                )
+                await db.execute(
+                    "UPDATE sessions SET status = 'transcribing', updated_at = datetime('now') WHERE id = ?",
+                    (session_id,),
+                )
+
+            for item in transcribe_chunked(audio_path, language=language):
+                if isinstance(item, ChunkProgress):
+                    yield _sse_event("progress", {
+                        "chunk": item.chunk,
+                        "total_chunks": item.total_chunks,
+                    })
+                elif isinstance(item, TranscriptSegment):
+                    async with get_db() as db:
+                        await db.execute(
+                            "INSERT INTO transcript_segments (session_id, text, start_time, end_time) VALUES (?, ?, ?, ?)",
+                            (session_id, item.text, item.start_time, item.end_time),
+                        )
+
+                    yield _sse_event("segment", {
+                        "text": item.text,
+                        "start_time": item.start_time,
+                        "end_time": item.end_time,
+                    })
+                    segments_count += 1
+
+            # Run speaker diarization
+            from talekeeper.services.diarization import run_final_diarization
+            from talekeeper.services.audio import audio_to_wav
+
+            wav_path = audio_to_wav(audio_path)
+            try:
+                await run_final_diarization(session_id, wav_path)
+            finally:
+                if wav_path.exists():
+                    wav_path.unlink()
+
+            # Mark session as completed
+            async with get_db() as db:
+                await db.execute(
+                    "UPDATE sessions SET status = 'completed', updated_at = datetime('now') WHERE id = ?",
+                    (session_id,),
+                )
+
+            yield _sse_event("done", {"segments_count": segments_count})
+
+        except Exception as exc:
+            yield _sse_event("error", {"message": str(exc)})
+            async with get_db() as db:
+                await db.execute(
+                    "UPDATE sessions SET status = 'completed', updated_at = datetime('now') WHERE id = ?",
+                    (session_id,),
+                )
+
+    return StreamingResponse(sse_generator(), media_type="text/event-stream")

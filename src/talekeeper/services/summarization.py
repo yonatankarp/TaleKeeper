@@ -2,30 +2,39 @@
 
 from talekeeper.services import ollama
 
-FULL_SUMMARY_SYSTEM = """You are a skilled narrator summarizing a tabletop RPG session.
-Write a compelling narrative summary capturing key plot events, NPC interactions,
-combat encounters, player decisions, and notable character moments.
-Use third person, past tense. Be specific about names and events."""
+FULL_SUMMARY_SYSTEM = """You are a summarizer for tabletop RPG session transcripts.
+Your job is to summarize ONLY what is actually said in the transcript.
+Do NOT invent, fabricate, or hallucinate any content that is not in the transcript.
+Do NOT create fictional characters, events, or plot points.
+If the transcript contains no meaningful RPG content, say so plainly.
+Use third person, past tense. Be specific about names and events mentioned in the transcript."""
 
-FULL_SUMMARY_PROMPT = """Summarize the following D&D session transcript into a narrative recap.
+FULL_SUMMARY_PROMPT = """Summarize the following session transcript into a narrative recap.
+IMPORTANT: Only include information that is actually present in the transcript below.
+Do NOT make up any names, events, or details that are not in the transcript.
+If the transcript is empty, repetitive, or contains no meaningful content, state that clearly.
 
 TRANSCRIPT:
 {transcript}
 
-Write a detailed but readable session summary."""
+Write a summary based strictly on the transcript above."""
 
 POV_SUMMARY_SYSTEM = """You are writing a personal journal entry from the perspective of a
 specific character in a tabletop RPG session. Focus on what this character experienced,
 learned, decided, and how they interacted with other characters and the world.
-Write in first person as the character."""
+Write in first person as the character.
+IMPORTANT: Only reference events, dialogue, and details that actually appear in the transcript.
+Do NOT invent or fabricate any content."""
 
 POV_SUMMARY_PROMPT = """Write a session recap from the perspective of {character_name},
 played by {player_name}. Focus on their personal experience of the session.
+IMPORTANT: Only include information actually present in the transcript below.
+If the transcript has no meaningful content, say so.
 
 TRANSCRIPT:
 {transcript}
 
-Write a first-person recap as {character_name}."""
+Write a first-person recap as {character_name}, based strictly on the transcript above."""
 
 # Rough token estimation: ~4 chars per token
 CHARS_PER_TOKEN = 4
@@ -92,7 +101,7 @@ async def generate_full_summary(transcript_text: str, model: str = "llama3.1:8b"
     # Chunked summarization
     chunk_summaries = []
     for i, chunk in enumerate(chunks):
-        prompt = f"Summarize this section ({i + 1}/{len(chunks)}) of a D&D session transcript:\n\n{chunk}"
+        prompt = f"Summarize this section ({i + 1}/{len(chunks)}) of a session transcript. Only include what is actually said:\n\n{chunk}"
         summary = await ollama.generate(model, prompt, system=FULL_SUMMARY_SYSTEM)
         chunk_summaries.append(summary)
 

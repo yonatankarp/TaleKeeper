@@ -24,3 +24,83 @@ export const api = {
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, body),
   del: <T>(path: string) => request<T>('DELETE', path),
 };
+
+export async function uploadAudio(sessionId: number, file: File): Promise<{ audio_path: string }> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${BASE}/sessions/${sessionId}/upload-audio`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    const detail = err.detail;
+    throw new Error(typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : res.statusText);
+  }
+  return res.json();
+}
+
+export function processAudio(
+  sessionId: number,
+  onProgress: (chunk: number, total: number) => void,
+  onSegment: (seg: { text: string; start_time: number; end_time: number }) => void,
+  onDone: (segmentsCount: number) => void,
+  onError: (message: string) => void,
+): { cancel: () => void } {
+  let cancelled = false;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+
+  (async () => {
+    try {
+      const res = await fetch(`${BASE}/sessions/${sessionId}/process-audio`, {
+        method: 'POST',
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        onError(typeof err.detail === 'string' ? err.detail : res.statusText);
+        return;
+      }
+
+      reader = res.body?.getReader() ?? null;
+      if (!reader) { onError('No response body'); return; }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (!cancelled) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        let currentEvent = '';
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith('data: ') && currentEvent) {
+            const data = JSON.parse(line.slice(6));
+            if (currentEvent === 'progress') onProgress(data.chunk, data.total_chunks);
+            else if (currentEvent === 'segment') onSegment(data);
+            else if (currentEvent === 'done') onDone(data.segments_count);
+            else if (currentEvent === 'error') onError(data.message || 'Processing failed');
+            currentEvent = '';
+          } else if (line.trim() === '') {
+            currentEvent = '';
+          }
+        }
+      }
+    } catch (e) {
+      if (!cancelled) onError(e instanceof Error ? e.message : 'Processing failed');
+    }
+  })();
+
+  return {
+    cancel() {
+      cancelled = true;
+      reader?.cancel();
+    },
+  };
+}

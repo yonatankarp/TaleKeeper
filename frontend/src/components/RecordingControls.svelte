@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { uploadAudio, processAudio } from '../lib/api';
+
   type Props = {
     sessionId: number;
     status: string;
@@ -14,6 +16,13 @@
   let mediaRecorder: MediaRecorder | null = null;
   let ws: WebSocket | null = null;
   let timerInterval: ReturnType<typeof setInterval> | null = null;
+
+  // Upload state
+  let uploading = $state(false);
+  let processing = $state(false);
+  let chunkProgress = $state<{ chunk: number; total: number } | null>(null);
+  let fileInput: HTMLInputElement | undefined = $state();
+  let processCanceller: { cancel: () => void } | null = null;
 
   // Global recording lock — only one session can record at a time
   const RECORDING_LOCK_KEY = 'talekeeper_recording_session';
@@ -167,7 +176,52 @@
     onRecordingStateChange?.(recordingState, elapsed);
   });
 
-  let canRecord = $derived(status === 'draft' || status === 'recording');
+  function triggerFileInput() {
+    fileInput?.click();
+  }
+
+  async function handleFileSelected(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    // Reset so the same file can be re-selected
+    input.value = '';
+
+    error = null;
+    uploading = true;
+
+    try {
+      await uploadAudio(sessionId, file);
+      uploading = false;
+      processing = true;
+
+      processCanceller = processAudio(
+        sessionId,
+        (chunk, total) => { chunkProgress = { chunk, total }; },
+        (seg) => { onTranscriptSegment?.(seg); },
+        (_count) => {
+          processing = false;
+          chunkProgress = null;
+          processCanceller = null;
+          onStatusChange();
+        },
+        (message) => {
+          error = message;
+          processing = false;
+          chunkProgress = null;
+          processCanceller = null;
+          onStatusChange();
+        },
+      );
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Upload failed';
+      uploading = false;
+    }
+  }
+
+  let busy = $derived(uploading || processing);
+  let canRecord = $derived((status === 'draft' || status === 'recording') && !busy);
+  let canUpload = $derived((status === 'draft' || status === 'completed') && !busy && recordingState === 'idle');
   let isLocked = $derived(isRecordingLocked());
 </script>
 
@@ -176,7 +230,7 @@
     <div class="error">{error}</div>
   {/if}
 
-  {#if recordingState !== 'idle'}
+  {#if recordingState !== 'idle' && !busy}
     <div class="recording-indicator">
       <span class="dot" class:pulsing={recordingState === 'recording'}></span>
       <span class="time">{formatElapsed(elapsed)}</span>
@@ -186,10 +240,35 @@
     </div>
   {/if}
 
+  {#if uploading}
+    <div class="upload-status">Uploading...</div>
+  {/if}
+
+  {#if processing}
+    <div class="upload-status">
+      {#if chunkProgress}
+        Transcribing chunk {chunkProgress.chunk} of {chunkProgress.total}
+      {:else}
+        Processing audio...
+      {/if}
+    </div>
+  {/if}
+
+  <input
+    type="file"
+    accept="audio/*"
+    class="hidden-input"
+    bind:this={fileInput}
+    onchange={handleFileSelected}
+  />
+
   <div class="controls">
-    {#if recordingState === 'idle'}
+    {#if recordingState === 'idle' && !busy}
       <button class="btn btn-record" onclick={startRecording} disabled={!canRecord || isLocked}>
         Start Recording
+      </button>
+      <button class="btn" onclick={triggerFileInput} disabled={!canUpload || isLocked}>
+        Upload Audio
       </button>
       {#if isLocked}
         <span class="lock-msg">Another session is recording</span>
@@ -284,5 +363,15 @@
     color: var(--text-muted);
     font-size: 0.8rem;
     font-style: italic;
+  }
+
+  .hidden-input {
+    display: none;
+  }
+
+  .upload-status {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin-bottom: 1rem;
   }
 </style>
