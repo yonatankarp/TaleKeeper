@@ -1,8 +1,9 @@
 <script lang="ts">
   import { api } from '../lib/api';
   import { navigate } from '../lib/router.svelte';
+  import LanguageSelect from '../components/LanguageSelect.svelte';
 
-  type Campaign = { id: number; name: string; description: string; created_at: string };
+  type Campaign = { id: number; name: string; description: string; language: string; created_at: string };
 
   let campaigns = $state<Campaign[]>([]);
   let showCreate = $state(false);
@@ -11,6 +12,8 @@
   let editingId = $state<number | null>(null);
   let editName = $state('');
   let editDesc = $state('');
+  let newLang = $state('en');
+  let editLang = $state('en');
 
   async function load() {
     campaigns = await api.get<Campaign[]>('/campaigns');
@@ -18,9 +21,10 @@
 
   async function create() {
     if (!newName.trim()) return;
-    await api.post('/campaigns', { name: newName, description: newDesc });
+    await api.post('/campaigns', { name: newName, description: newDesc, language: newLang });
     newName = '';
     newDesc = '';
+    newLang = 'en';
     showCreate = false;
     await load();
   }
@@ -29,11 +33,12 @@
     editingId = c.id;
     editName = c.name;
     editDesc = c.description;
+    editLang = c.language;
   }
 
   async function saveEdit() {
     if (editingId === null) return;
-    await api.put(`/campaigns/${editingId}`, { name: editName, description: editDesc });
+    await api.put(`/campaigns/${editingId}`, { name: editName, description: editDesc, language: editLang });
     editingId = null;
     await load();
   }
@@ -57,6 +62,8 @@
     <div class="card form-card">
       <input type="text" placeholder="Campaign name" bind:value={newName} />
       <textarea placeholder="Description (optional)" bind:value={newDesc}></textarea>
+      <label class="field-label">Language</label>
+      <LanguageSelect value={newLang} onchange={(code) => (newLang = code)} />
       <div class="btn-group">
         <button class="btn btn-primary" onclick={create}>Create</button>
         <button class="btn" onclick={() => (showCreate = false)}>Cancel</button>
@@ -70,6 +77,8 @@
         {#if editingId === c.id}
           <input type="text" bind:value={editName} />
           <textarea bind:value={editDesc}></textarea>
+          <label class="field-label">Language</label>
+          <LanguageSelect value={editLang} onchange={(code) => (editLang = code)} />
           <div class="btn-group">
             <button class="btn btn-primary" onclick={saveEdit}>Save</button>
             <button class="btn" onclick={() => (editingId = null)}>Cancel</button>
@@ -173,6 +182,13 @@
   .btn-danger { color: var(--accent); }
   .btn-sm { padding: 0.25rem 0.75rem; font-size: 0.8rem; }
   .btn-group { display: flex; gap: 0.5rem; }
+
+  .field-label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 0.25rem;
+  }
 
   .empty {
     text-align: center;
