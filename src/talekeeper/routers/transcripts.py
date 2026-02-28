@@ -12,6 +12,7 @@ router = APIRouter(tags=["transcripts"])
 
 class RetranscribeRequest(BaseModel):
     model_size: str = "medium"
+    language: str | None = None
 
 
 @router.get("/api/sessions/{session_id}/transcript")
@@ -49,6 +50,8 @@ async def retranscribe(session_id: int, body: RetranscribeRequest) -> dict:
         if not audio_path.exists():
             raise HTTPException(status_code=404, detail="Audio file not found")
 
+        language = body.language if body.language is not None else session.get("language", "en")
+
     # Convert to WAV
     wav_path = audio_path.with_suffix(".wav")
     webm_to_wav(audio_path, wav_path)
@@ -61,7 +64,7 @@ async def retranscribe(session_id: int, body: RetranscribeRequest) -> dict:
         )
 
     # Transcribe
-    segments = transcribe(wav_path, model_size=body.model_size)
+    segments = transcribe(wav_path, model_size=body.model_size, language=language)
 
     # Replace existing segments
     async with get_db() as db:
