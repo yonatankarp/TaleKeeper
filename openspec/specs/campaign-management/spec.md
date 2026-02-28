@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Provide full campaign and session lifecycle management, including CRUD operations for campaigns and sessions, session status tracking, player/character roster management, and a campaign overview dashboard.
+Provide full campaign and session lifecycle management, including CRUD operations for campaigns and sessions, session status tracking, player/character party management, and a campaign overview dashboard.
 
 ## Requirements
 
@@ -57,28 +57,28 @@ The system SHALL track each session's status: `draft` (created, no recording), `
 - **WHEN** transcription completes
 - **THEN** its status changes to `completed`
 
-### Requirement: Player and character roster
-The system SHALL allow the DM to manage a roster of players and their characters for each campaign. Each roster entry MUST have a player name and character name. Roster entries MAY be marked as active or inactive (for players who leave or join the campaign).
+### Requirement: Player and character party
+The system SHALL allow the DM to manage a party of players and their characters for each campaign. Each party entry MUST have a player name and character name. Party entries MAY be marked as active or inactive (for players who leave or join the campaign).
 
-#### Scenario: Add a player to the roster
-- **WHEN** the DM adds a player "Alex" with character "Thorin Ironforge" to a campaign's roster
-- **THEN** the roster entry is saved and available for speaker assignment in all sessions of that campaign
+#### Scenario: Add a player to the party
+- **WHEN** the DM adds a player "Alex" with character "Thorin Ironforge" to a campaign's party
+- **THEN** the party entry is saved and available for speaker assignment in all sessions of that campaign
 
-#### Scenario: Edit a roster entry
+#### Scenario: Edit a party entry
 - **WHEN** a player changes their character (e.g., character death) and the DM updates the character name from "Thorin" to "Lyra"
-- **THEN** the roster entry is updated; existing sessions retain the old character name in their speaker mappings, but new sessions use the updated name
+- **THEN** the party entry is updated; existing sessions retain the old character name in their speaker mappings, but new sessions use the updated name
 
 #### Scenario: Mark player inactive
 - **WHEN** a player leaves the campaign and the DM marks them as inactive
 - **THEN** the player no longer appears in the default speaker assignment list for new sessions but remains visible in historical sessions
 
-#### Scenario: Remove roster entry
-- **WHEN** the DM removes a roster entry
-- **THEN** a styled confirmation dialog appears with "Remove this player and character from the roster?" and upon confirmation removes the entry
+#### Scenario: Remove party entry
+- **WHEN** the DM removes a party entry
+- **THEN** a styled confirmation dialog appears with "Remove this player and character from the party?" and upon confirmation removes the entry
 
-#### Scenario: Empty roster shows guidance
-- **WHEN** the DM opens a roster page with no entries
-- **THEN** the message "No players in the roster yet. Add your party members above to use them for speaker identification." is displayed
+#### Scenario: Empty party shows guidance
+- **WHEN** the DM opens a party page with no entries
+- **THEN** the message "No players in the party yet. Add your party members above to use them for speaker identification." is displayed
 
 ### Requirement: Campaign overview dashboard
 The system SHALL display a dashboard when opening a campaign showing session count, total recorded time, and the most recent session's date. The dashboard MUST provide quick access to start a new session or continue the most recent one.
@@ -107,7 +107,7 @@ The system SHALL visually highlight the currently active campaign or page in the
 - **THEN** the "Settings" link in the sidebar is highlighted
 
 #### Scenario: Child pages highlight parent campaign
-- **WHEN** the DM is viewing a session or roster within a campaign
+- **WHEN** the DM is viewing a session or party within a campaign
 - **THEN** the parent campaign is highlighted in the sidebar
 
 ### Requirement: Breadcrumb navigation
@@ -117,9 +117,9 @@ The system SHALL display a breadcrumb navigation trail at the top of the main co
 - **WHEN** the DM is viewing Session 12 in the "Curse of Strahd" campaign
 - **THEN** breadcrumbs show "Campaigns / Curse of Strahd / Session 12" where "Campaigns" and "Curse of Strahd" are clickable links
 
-#### Scenario: Roster breadcrumbs
-- **WHEN** the DM is viewing the roster of a campaign
-- **THEN** breadcrumbs show "Campaigns / [Campaign Name] / Roster"
+#### Scenario: Party breadcrumbs
+- **WHEN** the DM is viewing the party of a campaign
+- **THEN** breadcrumbs show "Campaigns / [Campaign Name] / Party"
 
 ### Requirement: Campaign list empty state
 The system SHALL display a helpful guidance message when the campaign list is empty.

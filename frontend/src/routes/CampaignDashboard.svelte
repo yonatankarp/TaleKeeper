@@ -100,7 +100,7 @@
         {/if}
       </div>
       <div class="btn-group">
-        <button class="btn" onclick={() => navigate(`/campaigns/${campaignId}/roster`)}>Roster</button>
+        <button class="btn btn-icon" onclick={() => navigate(`/campaigns/${campaignId}/roster`)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 17.5L3 6V3h3l11.5 11.5"/><path d="M13 19l6-6"/><path d="M16 16l4 4"/><path d="M9.5 6.5L21 18v3h-3L6.5 9.5"/><path d="M11 5l-6 6"/><path d="M8 8L4 4"/></svg> Party</button>
         {#if sessions.length > 0}
           <button class="btn" onclick={() => navigate(`/sessions/${sessions[0].id}`)}>Continue Last Session</button>
         {/if}
@@ -270,7 +270,8 @@
   .badge-completed { background: var(--success); color: #fff; }
   .badge-audio { background: var(--btn-blue); color: #fff; }
 
-  .card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+  .card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; transition: box-shadow 0.2s ease; }
+  .card:hover { box-shadow: 0 0 8px rgba(212, 164, 56, 0.15); }
   .form-card { margin-bottom: 1.5rem; }
 
   input {
@@ -298,8 +299,9 @@
   .btn:hover { background: var(--bg-hover); }
   .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn-primary:hover { background: var(--accent-hover); }
-  .btn-danger { color: var(--accent); }
+  .btn-danger { color: var(--danger); }
   .btn-sm { padding: 0.25rem 0.75rem; font-size: 0.8rem; }
+  .btn-icon { display: inline-flex; align-items: center; gap: 0.35rem; }
   .btn-group { display: flex; gap: 0.5rem; }
 
   .field-label {
@@ -309,8 +311,8 @@
     margin-bottom: 0.25rem;
   }
 
-  .input-error { border-color: var(--accent) !important; }
-  .field-error { color: var(--accent); font-size: 0.8rem; margin: -0.25rem 0 0.5rem; }
+  .input-error { border-color: var(--danger) !important; }
+  .field-error { color: var(--danger); font-size: 0.8rem; margin: -0.25rem 0 0.5rem; }
 
   .empty { text-align: center; color: var(--text-muted); margin-top: 2rem; }
 </style>

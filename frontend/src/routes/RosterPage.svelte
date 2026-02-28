@@ -64,10 +64,10 @@
 </script>
 
 {#if pageLoading}
-  <div class="loading"><Spinner /> Loading roster...</div>
+  <div class="loading"><Spinner /> Loading party...</div>
 {:else}
 <div class="page">
-  <h2>Player Roster</h2>
+  <h2>Party</h2>
 
   <div class="add-form card">
     <div class="form-row">
@@ -106,15 +106,15 @@
   </div>
 
   {#if entries.length === 0}
-    <p class="empty">No players in the roster yet. Add your party members above to use them for speaker identification.</p>
+    <p class="empty">No players in the party yet. Add your party members above to use them for speaker identification.</p>
   {/if}
 </div>
 {/if}
 
 {#if confirmRemoveId !== null}
   <ConfirmDialog
-    title="Remove Roster Entry"
-    message="Remove this player and character from the roster?"
+    title="Remove Party Member"
+    message="Remove this player and character from the party?"
     confirmLabel="Remove"
     onconfirm={() => remove(confirmRemoveId!)}
     oncancel={() => (confirmRemoveId = null)}
@@ -188,7 +188,7 @@
   .btn:hover { background: var(--bg-hover); }
   .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn-primary:hover { background: var(--accent-hover); }
-  .btn-danger { color: var(--accent); }
+  .btn-danger { color: var(--danger); }
   .btn-sm { padding: 0.25rem 0.75rem; font-size: 0.8rem; }
   .btn-group { display: flex; gap: 0.5rem; }
 

@@ -239,8 +239,8 @@
 
   .error {
     background: var(--error-bg);
-    border: 1px solid var(--accent);
-    color: var(--accent);
+    border: 1px solid var(--danger);
+    color: var(--danger);
     padding: 0.75rem;
     border-radius: 4px;
     font-size: 0.9rem;
@@ -324,7 +324,7 @@
   .btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
-  .btn-danger { color: var(--accent); }
+  .btn-danger { color: var(--danger); }
   .btn-sm { padding: 0.25rem 0.75rem; font-size: 0.8rem; }
   .btn-group { display: flex; gap: 0.5rem; }
 

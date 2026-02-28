@@ -146,6 +146,11 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 1.25rem;
+    transition: box-shadow 0.2s ease;
+  }
+
+  .card:hover {
+    box-shadow: 0 0 8px rgba(212, 164, 56, 0.15);
   }
 
   .form-card {
@@ -204,7 +209,7 @@
   .btn:hover { background: var(--bg-hover); }
   .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn-primary:hover { background: var(--accent-hover); }
-  .btn-danger { color: var(--accent); }
+  .btn-danger { color: var(--danger); }
   .btn-sm { padding: 0.25rem 0.75rem; font-size: 0.8rem; }
   .btn-group { display: flex; gap: 0.5rem; }
 
@@ -225,11 +230,11 @@
   }
 
   .input-error {
-    border-color: var(--accent) !important;
+    border-color: var(--danger) !important;
   }
 
   .field-error {
-    color: var(--accent);
+    color: var(--danger);
     font-size: 0.8rem;
     margin: -0.25rem 0 0.5rem;
   }

@@ -85,13 +85,14 @@
   .btn:hover { background: var(--bg-hover); }
 
   .btn-danger {
-    background: var(--accent);
-    border-color: var(--accent);
+    background: var(--danger);
+    border-color: var(--danger);
     color: #fff;
   }
 
   .btn-danger:hover {
-    background: var(--accent-hover);
+    background: var(--danger);
+    opacity: 0.85;
   }
 
   @keyframes fadeIn {

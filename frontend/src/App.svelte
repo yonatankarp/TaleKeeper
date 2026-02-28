@@ -52,9 +52,9 @@
       try {
         const campaign = await api.get<{ name: string }>(`/campaigns/${matched.params.id}`);
         crumbs.push({ label: campaign.name, path: `/campaigns/${matched.params.id}` });
-        crumbs.push({ label: 'Roster', path: null });
+        crumbs.push({ label: 'Party', path: null });
       } catch {
-        crumbs.push({ label: 'Roster', path: null });
+        crumbs.push({ label: 'Party', path: null });
       }
     } else if (matched.name === 'session') {
       try {
@@ -196,8 +196,8 @@
 
   .error-toast {
     background: var(--error-bg);
-    border: 1px solid var(--accent);
-    color: var(--accent);
+    border: 1px solid var(--danger);
+    color: var(--danger);
   }
 
   @keyframes slideIn {
