@@ -24,6 +24,18 @@ async def init_db() -> None:
 async def _apply_schema(db: aiosqlite.Connection) -> None:
     """Create all tables if they don't exist."""
     await db.executescript(_SCHEMA)
+    await _migrate_add_language_columns(db)
+
+
+async def _migrate_add_language_columns(db: aiosqlite.Connection) -> None:
+    """Add language column to campaigns and sessions if missing."""
+    for table in ("campaigns", "sessions"):
+        cols = await db.execute_fetchall(f"PRAGMA table_info({table})")
+        col_names = [c["name"] for c in cols]
+        if "language" not in col_names:
+            await db.execute(
+                f"ALTER TABLE {table} ADD COLUMN language TEXT NOT NULL DEFAULT 'en'"
+            )
 
 
 @asynccontextmanager
@@ -43,6 +55,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     description TEXT DEFAULT '',
+    language TEXT NOT NULL DEFAULT 'en',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -53,6 +66,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     name TEXT NOT NULL,
     date TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'draft',
+    language TEXT NOT NULL DEFAULT 'en',
     audio_path TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
