@@ -9,7 +9,7 @@
   type Props = { sessionId: number };
   let { sessionId }: Props = $props();
 
-  type Session = { id: number; campaign_id: number; name: string; date: string; status: string; audio_path: string | null };
+  type Session = { id: number; campaign_id: number; name: string; date: string; status: string; audio_path: string | null; language: string };
 
   let session = $state<Session | null>(null);
   let activeTab = $state('recording');
@@ -35,7 +35,7 @@
     <div class="page-header">
       <div>
         <h2>{session.name}</h2>
-        <span class="meta">{session.date} &middot; {session.status}</span>
+        <span class="meta">{session.date} &middot; {session.status} &middot; {session.language.toUpperCase()}</span>
       </div>
     </div>
 
@@ -61,6 +61,8 @@
         <TranscriptView
           sessionId={sessionId}
           isRecording={session.status === 'recording'}
+          {hasAudio}
+          language={session.language}
           onSegmentClick={handleSegmentClick}
         />
       {:else if activeTab === 'summaries'}
