@@ -125,18 +125,19 @@ async def run_final_diarization(session_id: int, wav_path: Path) -> None:
     async with get_db() as db:
         # Create/update speaker records
         speaker_id_map = {}
-        for label in unique_labels:
+        for idx, label in enumerate(unique_labels, start=1):
+            friendly_label = f"Player {idx}"
             # Check if speaker already exists
             rows = await db.execute_fetchall(
                 "SELECT id FROM speakers WHERE session_id = ? AND diarization_label = ?",
-                (session_id, label),
+                (session_id, friendly_label),
             )
             if rows:
                 speaker_id_map[label] = rows[0]["id"]
             else:
                 cursor = await db.execute(
                     "INSERT INTO speakers (session_id, diarization_label) VALUES (?, ?)",
-                    (session_id, label),
+                    (session_id, friendly_label),
                 )
                 speaker_id_map[label] = cursor.lastrowid
 

@@ -1,7 +1,6 @@
 """WebSocket recording endpoint and audio management."""
 
 import asyncio
-import io
 import json
 import tempfile
 from pathlib import Path
@@ -18,40 +17,72 @@ _active_recording_session: int | None = None
 
 
 async def _run_transcription_on_chunk(
-    accumulated_audio: bytes, session_id: int, websocket: WebSocket, offset: float, language: str = "en"
-) -> None:
-    """Run incremental transcription on accumulated audio and stream results back."""
+    chunk_dir: Path,
+    current_chunk_index: int,
+    session_id: int,
+    websocket: WebSocket,
+    cumulative_offset: float,
+    language: str = "en",
+) -> float:
+    """Transcribe the new audio since the last transcription.
+
+    Concatenates all chunks from 0 (for valid WebM header) to current,
+    converts to WAV, slices from cumulative_offset onwards, and transcribes
+    only the new portion. Returns the new cumulative offset.
+    """
     try:
-        from talekeeper.services.audio import webm_bytes_to_wav
+        import io
+        from pydub import AudioSegment
         from talekeeper.services.transcription import transcribe
+
+        # Concatenate ALL chunks from 0 to get a valid WebM (needs header from chunk 0)
+        all_data = b""
+        for i in range(current_chunk_index):
+            chunk_file = chunk_dir / f"chunk_{i:03d}.webm"
+            if chunk_file.exists():
+                all_data += chunk_file.read_bytes()
+
+        if not all_data:
+            return cumulative_offset
+
+        # Convert full WebM to audio, then slice only the new portion
+        full_audio = AudioSegment.from_file(io.BytesIO(all_data), format="webm")
+        offset_ms = int(cumulative_offset * 1000)
+        new_portion = full_audio[offset_ms:]
+
+        if len(new_portion) == 0:
+            return cumulative_offset
+
+        new_duration_sec = len(new_portion) / 1000.0
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             wav_path = Path(tmp.name)
 
-        webm_bytes_to_wav(accumulated_audio, wav_path)
+        try:
+            new_portion.set_channels(1).set_frame_rate(16000).export(str(wav_path), format="wav")
 
-        segments = transcribe(wav_path, language=language)
+            segments = transcribe(wav_path, language=language)
 
-        for seg in segments:
-            if seg.start_time >= offset:
+            for seg in segments:
                 await websocket.send_json({
                     "type": "transcript",
                     "text": seg.text,
-                    "start_time": seg.start_time,
-                    "end_time": seg.end_time,
+                    "start_time": seg.start_time + cumulative_offset,
+                    "end_time": seg.end_time + cumulative_offset,
                 })
 
-                # Persist segment
                 async with get_db() as db:
                     await db.execute(
                         "INSERT INTO transcript_segments (session_id, text, start_time, end_time) VALUES (?, ?, ?, ?)",
-                        (session_id, seg.text, seg.start_time, seg.end_time),
+                        (session_id, seg.text, seg.start_time + cumulative_offset, seg.end_time + cumulative_offset),
                     )
 
-        if wav_path.exists():
-            wav_path.unlink()
+            return cumulative_offset + new_duration_sec
+        finally:
+            if wav_path.exists():
+                wav_path.unlink()
     except Exception:
-        pass  # Don't crash the recording if transcription fails
+        return cumulative_offset  # Don't crash the recording if transcription fails
 
 
 @router.websocket("/ws/recording/{session_id}")
@@ -87,31 +118,45 @@ async def recording_ws(websocket: WebSocket, session_id: int) -> None:
 
     _active_recording_session = session_id
 
-    # Prepare audio path
+    # Prepare audio paths
     audio_dir = Path(f"data/audio/{campaign_id}")
     audio_dir.mkdir(parents=True, exist_ok=True)
     audio_path = audio_dir / f"{session_id}.webm"
 
-    chunks: list[bytes] = []
+    # Disk-based chunk storage
+    chunk_dir = audio_dir / f"tmp_{session_id}"
+    chunk_dir.mkdir(parents=True, exist_ok=True)
+
     chunk_count = 0
-    last_transcribed_offset = 0.0
+    cumulative_offset = 0.0
+    transcription_in_progress = False
 
     try:
         while True:
             data = await websocket.receive()
 
             if "bytes" in data:
-                chunks.append(data["bytes"])
+                # Write chunk to numbered file on disk
+                chunk_file = chunk_dir / f"chunk_{chunk_count:03d}.webm"
+                chunk_file.write_bytes(data["bytes"])
                 chunk_count += 1
 
-                # Run incremental transcription every ~10 seconds of audio
-                if chunk_count % 10 == 0 and chunks:
-                    accumulated = b"".join(chunks)
-                    asyncio.create_task(
-                        _run_transcription_on_chunk(
-                            accumulated, session_id, websocket, last_transcribed_offset, session_language
-                        )
-                    )
+                # Run incremental transcription every ~10 chunks (skip if previous still running)
+                if chunk_count % 10 == 0 and not transcription_in_progress:
+                    current_chunk = chunk_count
+
+                    async def _do_transcribe(ci: int, offset: float) -> None:
+                        nonlocal cumulative_offset, transcription_in_progress
+                        transcription_in_progress = True
+                        try:
+                            new_offset = await _run_transcription_on_chunk(
+                                chunk_dir, ci, session_id, websocket, offset, session_language
+                            )
+                            cumulative_offset = new_offset
+                        finally:
+                            transcription_in_progress = False
+
+                    asyncio.create_task(_do_transcribe(current_chunk, cumulative_offset))
             elif "text" in data:
                 msg = json.loads(data["text"])
                 if msg.get("type") == "stop":
@@ -121,20 +166,32 @@ async def recording_ws(websocket: WebSocket, session_id: int) -> None:
     finally:
         _active_recording_session = None
 
-        # Assemble chunks into a single file
-        if chunks:
-            with open(audio_path, "wb") as f:
-                for chunk in chunks:
-                    f.write(chunk)
+        # Merge chunk files into the final .webm
+        chunk_files = sorted(chunk_dir.glob("chunk_*.webm"))
+        if chunk_files:
+            from talekeeper.services.audio import merge_chunk_files, webm_to_wav
+            merge_chunk_files(chunk_dir, audio_path)
 
-            # Update session with audio path and status
             async with get_db() as db:
                 await db.execute(
                     "UPDATE sessions SET audio_path = ?, status = 'completed', updated_at = datetime('now') WHERE id = ?",
                     (str(audio_path), session_id),
                 )
+
+            # Run speaker diarization on the final audio
+            from talekeeper.services.diarization import run_final_diarization
+            wav_path = webm_to_wav(audio_path)
+            try:
+                await run_final_diarization(session_id, wav_path)
+            finally:
+                if wav_path.exists():
+                    wav_path.unlink()
         else:
-            # No audio recorded, revert to draft
+            # No audio recorded, revert to draft and clean up
+            if chunk_dir.exists():
+                import shutil
+                shutil.rmtree(chunk_dir)
+
             async with get_db() as db:
                 await db.execute(
                     "UPDATE sessions SET status = 'draft', updated_at = datetime('now') WHERE id = ?",

@@ -1,8 +1,11 @@
 """Transcript API endpoints."""
 
+import json
 from pathlib import Path
+from typing import AsyncIterator
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
 from talekeeper.db import get_db
@@ -38,10 +41,17 @@ async def get_transcript(session_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def _sse_event(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
 @router.post("/api/sessions/{session_id}/retranscribe")
-async def retranscribe(session_id: int, body: RetranscribeRequest) -> dict:
-    from talekeeper.services.audio import webm_to_wav
-    from talekeeper.services.transcription import transcribe
+async def retranscribe(session_id: int, body: RetranscribeRequest) -> StreamingResponse:
+    from talekeeper.services.transcription import (
+        transcribe_chunked,
+        TranscriptSegment,
+        ChunkProgress,
+    )
 
     async with get_db() as db:
         rows = await db.execute_fetchall(
@@ -60,39 +70,69 @@ async def retranscribe(session_id: int, body: RetranscribeRequest) -> dict:
 
         language = body.language if body.language is not None else session.get("language", "en")
 
-    # Convert to WAV
-    wav_path = audio_path.with_suffix(".wav")
-    webm_to_wav(audio_path, wav_path)
+    async def sse_generator() -> AsyncIterator[str]:
+        segments_count = 0
+        try:
+            # Delete existing segments and speakers, set status to transcribing
+            async with get_db() as db:
+                await db.execute(
+                    "DELETE FROM transcript_segments WHERE session_id = ?", (session_id,)
+                )
+                await db.execute(
+                    "DELETE FROM speakers WHERE session_id = ?", (session_id,)
+                )
+                await db.execute(
+                    "UPDATE sessions SET status = 'transcribing', updated_at = datetime('now') WHERE id = ?",
+                    (session_id,),
+                )
 
-    # Update status to transcribing
-    async with get_db() as db:
-        await db.execute(
-            "UPDATE sessions SET status = 'transcribing', updated_at = datetime('now') WHERE id = ?",
-            (session_id,),
-        )
+            for item in transcribe_chunked(audio_path, model_size=body.model_size, language=language):
+                if isinstance(item, ChunkProgress):
+                    yield _sse_event("progress", {
+                        "chunk": item.chunk,
+                        "total_chunks": item.total_chunks,
+                    })
+                elif isinstance(item, TranscriptSegment):
+                    # Persist segment before emitting SSE event
+                    async with get_db() as db:
+                        await db.execute(
+                            "INSERT INTO transcript_segments (session_id, text, start_time, end_time) VALUES (?, ?, ?, ?)",
+                            (session_id, item.text, item.start_time, item.end_time),
+                        )
 
-    # Transcribe
-    segments = transcribe(wav_path, model_size=body.model_size, language=language)
+                    yield _sse_event("segment", {
+                        "text": item.text,
+                        "start_time": item.start_time,
+                        "end_time": item.end_time,
+                    })
+                    segments_count += 1
 
-    # Replace existing segments
-    async with get_db() as db:
-        await db.execute(
-            "DELETE FROM transcript_segments WHERE session_id = ?", (session_id,)
-        )
+            # Run speaker diarization before marking complete
+            from talekeeper.services.diarization import run_final_diarization
+            from talekeeper.services.audio import webm_to_wav
+            wav_path = webm_to_wav(audio_path)
+            try:
+                await run_final_diarization(session_id, wav_path)
+            finally:
+                if wav_path.exists():
+                    wav_path.unlink()
 
-        for seg in segments:
-            await db.execute(
-                "INSERT INTO transcript_segments (session_id, text, start_time, end_time) VALUES (?, ?, ?, ?)",
-                (session_id, seg.text, seg.start_time, seg.end_time),
-            )
+            # Mark session as completed
+            async with get_db() as db:
+                await db.execute(
+                    "UPDATE sessions SET status = 'completed', updated_at = datetime('now') WHERE id = ?",
+                    (session_id,),
+                )
 
-        await db.execute(
-            "UPDATE sessions SET status = 'completed', updated_at = datetime('now') WHERE id = ?",
-            (session_id,),
-        )
+            yield _sse_event("done", {"segments_count": segments_count})
 
-    # Clean up WAV
-    if wav_path.exists():
-        wav_path.unlink()
+        except Exception as exc:
+            # Emit error event and recover session status
+            yield _sse_event("error", {"message": str(exc)})
+            async with get_db() as db:
+                await db.execute(
+                    "UPDATE sessions SET status = 'completed', updated_at = datetime('now') WHERE id = ?",
+                    (session_id,),
+                )
 
-    return {"segments_count": len(segments)}
+    return StreamingResponse(sse_generator(), media_type="text/event-stream")
