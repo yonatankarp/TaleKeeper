@@ -19,12 +19,17 @@ def get_pipeline():
     if _pipeline is not None:
         return _pipeline
 
+    import os
     from pyannote.audio import Pipeline
     import torch
 
+    token = os.environ.get("HF_TOKEN")
+    if not token:
+        raise RuntimeError("HF_TOKEN environment variable is required for speaker diarization. Get one at https://huggingface.co/settings/tokens")
+
     _pipeline = Pipeline.from_pretrained(
         "pyannote/speaker-diarization-3.1",
-        use_auth_token=True,
+        token=token,
     )
 
     # Use Metal acceleration on Apple Silicon if available

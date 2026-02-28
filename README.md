@@ -16,6 +16,14 @@ TaleKeeper captures audio from your game table, transcribes speech on-device usi
   ```
   brew install ollama
   ```
+- **Hugging Face token** — required for speaker diarization (pyannote model)
+  1. Create a free account at https://huggingface.co
+  2. Accept the model license at https://huggingface.co/pyannote/speaker-diarization-3.1
+  3. Create a token at https://huggingface.co/settings/tokens (read access is sufficient)
+  4. Set the environment variable before running:
+     ```
+     export HF_TOKEN=hf_your_token_here
+     ```
 
 ## Quick Start
 
