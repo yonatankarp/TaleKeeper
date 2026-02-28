@@ -11,26 +11,30 @@ router = APIRouter(tags=["sessions"])
 class SessionCreate(BaseModel):
     name: str
     date: str
+    language: str | None = None
 
 
 class SessionUpdate(BaseModel):
     name: str | None = None
     date: str | None = None
     status: str | None = None
+    language: str | None = None
 
 
 @router.post("/api/campaigns/{campaign_id}/sessions")
 async def create_session(campaign_id: int, body: SessionCreate) -> dict:
     async with get_db() as db:
         existing = await db.execute_fetchall(
-            "SELECT id FROM campaigns WHERE id = ?", (campaign_id,)
+            "SELECT id, language FROM campaigns WHERE id = ?", (campaign_id,)
         )
         if not existing:
             raise HTTPException(status_code=404, detail="Campaign not found")
 
+        language = body.language if body.language is not None else existing[0]["language"]
+
         cursor = await db.execute(
-            "INSERT INTO sessions (campaign_id, name, date) VALUES (?, ?, ?)",
-            (campaign_id, body.name, body.date),
+            "INSERT INTO sessions (campaign_id, name, date, language) VALUES (?, ?, ?, ?)",
+            (campaign_id, body.name, body.date, language),
         )
         session_id = cursor.lastrowid
         rows = await db.execute_fetchall(
@@ -80,6 +84,9 @@ async def update_session(session_id: int, body: SessionUpdate) -> dict:
         if body.status is not None:
             fields.append("status = ?")
             values.append(body.status)
+        if body.language is not None:
+            fields.append("language = ?")
+            values.append(body.language)
 
         if fields:
             fields.append("updated_at = datetime('now')")
