@@ -9,17 +9,22 @@
     is_first_run: boolean;
     data_dir_exists: boolean;
     llm_connected: boolean;
+    image_connected: boolean;
     data_dir: string;
   };
 
   let status = $state<SetupStatus | null>(null);
   let showDataInfo = $state(false);
   let showLlmInfo = $state(false);
+  let showImageInfo = $state(false);
   let checking = $state(false);
 
   let llmBaseUrl = $state('');
   let llmApiKey = $state('');
   let llmModel = $state('');
+  let imageBaseUrl = $state('');
+  let imageApiKey = $state('');
+  let imageModel = $state('');
   let dataDir = $state('');
 
   async function load() {
@@ -28,6 +33,9 @@
     llmBaseUrl = settings.llm_base_url || '';
     llmApiKey = settings.llm_api_key || '';
     llmModel = settings.llm_model || '';
+    imageBaseUrl = settings.image_base_url || '';
+    imageApiKey = settings.image_api_key || '';
+    imageModel = settings.image_model || '';
     dataDir = settings.data_dir || '';
   }
 
@@ -39,6 +47,9 @@
           llm_base_url: llmBaseUrl,
           llm_api_key: llmApiKey,
           llm_model: llmModel,
+          image_base_url: imageBaseUrl,
+          image_api_key: imageApiKey,
+          image_model: imageModel,
           data_dir: dataDir,
         },
       });
@@ -132,6 +143,43 @@
             </div>
           </div>
         </div>
+
+        <div class="check" class:ok={status.image_connected}>
+          <span class="icon">{status.image_connected ? '\u2713' : '\u2717'}</span>
+          <div class="image-section">
+            <span>
+              Image Generation (optional)
+              <button class="info-btn" onclick={() => (showImageInfo = !showImageInfo)} title="What is this?">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+              </button>
+            </span>
+            {#if showImageInfo}
+              <div class="info-tooltip">
+                <p><strong>Local setup — Ollama (free, macOS only):</strong></p>
+                <ol>
+                  <li>Install from <strong>ollama.com/download/mac</strong></li>
+                  <li>Pull a model: <code>ollama pull x/flux2-klein:9b</code></li>
+                </ol>
+                <p>Cloud providers (OpenAI dall-e-3, etc.) work too — enter their URL and API key below.</p>
+              </div>
+            {/if}
+
+            <div class="llm-config">
+              <label>
+                Base URL
+                <input type="text" bind:value={imageBaseUrl} placeholder="http://localhost:11434/v1" />
+              </label>
+              <label>
+                API Key
+                <input type="password" bind:value={imageApiKey} placeholder="Not required for local providers" />
+              </label>
+              <label>
+                Model
+                <input type="text" bind:value={imageModel} placeholder="x/flux2-klein:9b" />
+              </label>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="actions">
@@ -143,8 +191,8 @@
         </button>
       </div>
 
-      {#if !status.llm_connected}
-        <p class="note">An LLM provider is optional — recording and transcription work without it. You'll need one for summary generation.</p>
+      {#if !status.llm_connected || !status.image_connected}
+        <p class="note">LLM and image providers are optional — recording and transcription work without them. You'll need an LLM for summaries and an image provider for scene illustrations.</p>
       {/if}
     {:else}
       <p>Checking setup...</p>
@@ -206,6 +254,7 @@
 
   .data-section { flex: 1; min-width: 0; }
   .llm-section { flex: 1; min-width: 0; }
+  .image-section { flex: 1; min-width: 0; }
 
   .info-btn {
     background: none;

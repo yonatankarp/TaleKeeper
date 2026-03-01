@@ -6,8 +6,12 @@ services:
     volumes:
       - ./data/db:/app/data/db
       - ./data/audio:/app/data/audio
+      - ./data/images:/app/data/images
     environment:
       - LLM_BASE_URL=http://ollama:11434/v1
+      - IMAGE_BASE_URL=${IMAGE_BASE_URL:-}
+      - IMAGE_API_KEY=${IMAGE_API_KEY:-}
+      - IMAGE_MODEL=${IMAGE_MODEL:-}
       - TALEKEEPER_SECRET=${TALEKEEPER_SECRET:-}
     depends_on:
       - ollama

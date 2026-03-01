@@ -36,6 +36,34 @@
   let fileInput: HTMLInputElement | undefined = $state();
   let processCanceller: { cancel: () => void } | null = null;
 
+  // Processing progress state
+  let processingStartTime = $state<number | null>(null);
+  let phase = $state<'transcribing' | 'diarization' | null>(null);
+  let now = $state(Date.now());
+  let etaInterval: ReturnType<typeof setInterval> | null = null;
+
+  // Tick `now` every second while processing for live ETA updates
+  $effect(() => {
+    if (processing && chunkProgress) {
+      etaInterval = setInterval(() => { now = Date.now(); }, 1000);
+      return () => { if (etaInterval) { clearInterval(etaInterval); etaInterval = null; } };
+    }
+  });
+
+  let progressPercent = $derived(
+    chunkProgress ? Math.round((chunkProgress.chunk / chunkProgress.total) * 100) : 0
+  );
+
+  let etaText = $derived.by(() => {
+    if (!processingStartTime || !chunkProgress || chunkProgress.chunk <= 0) return '';
+    const elapsed = now - processingStartTime;
+    const avgPerChunk = elapsed / chunkProgress.chunk;
+    const remainingMs = avgPerChunk * (chunkProgress.total - chunkProgress.chunk);
+    const mins = Math.ceil(remainingMs / 60000);
+    if (mins < 1) return '< 1 min remaining';
+    return `~${mins} min remaining`;
+  });
+
   // Global recording lock — only one session can record at a time
   const RECORDING_LOCK_KEY = 'talekeeper_recording_session';
 
@@ -176,13 +204,21 @@
 
       onStatusChange();
 
+      processingStartTime = Date.now();
+      phase = null;
+
       processCanceller = processAudio(
         sessionId,
-        (chunk, total) => { chunkProgress = { chunk, total }; },
+        (chunk, total) => {
+          if (!phase) phase = 'transcribing';
+          chunkProgress = { chunk, total };
+        },
         (seg) => { onTranscriptSegment?.(seg); },
         (_count) => {
           processing = false;
           chunkProgress = null;
+          processingStartTime = null;
+          phase = null;
           processCanceller = null;
           onStatusChange();
         },
@@ -190,14 +226,19 @@
           error = message;
           processing = false;
           chunkProgress = null;
+          processingStartTime = null;
+          phase = null;
           processCanceller = null;
           onStatusChange();
         },
         numSpeakers,
+        (p) => { phase = p as 'diarization'; },
       );
     } catch (e) {
       error = e instanceof Error ? e.message : 'Processing failed';
       processing = false;
+      processingStartTime = null;
+      phase = null;
       onStatusChange();
     }
   }
@@ -261,14 +302,21 @@
       await uploadAudio(sessionId, file);
       uploading = false;
       processing = true;
+      processingStartTime = Date.now();
+      phase = null;
 
       processCanceller = processAudio(
         sessionId,
-        (chunk, total) => { chunkProgress = { chunk, total }; },
+        (chunk, total) => {
+          if (!phase) phase = 'transcribing';
+          chunkProgress = { chunk, total };
+        },
         (seg) => { onTranscriptSegment?.(seg); },
         (_count) => {
           processing = false;
           chunkProgress = null;
+          processingStartTime = null;
+          phase = null;
           processCanceller = null;
           onStatusChange();
         },
@@ -276,10 +324,13 @@
           error = message;
           processing = false;
           chunkProgress = null;
+          processingStartTime = null;
+          phase = null;
           processCanceller = null;
           onStatusChange();
         },
         numSpeakers,
+        (p) => { phase = p as 'diarization'; },
       );
     } catch (e) {
       error = e instanceof Error ? e.message : 'Upload failed';
@@ -317,10 +368,20 @@
 
   {#if processing}
     <div class="processing-banner">
-      <span class="processing-dot"></span>
-      {#if chunkProgress}
-        Transcribing chunk {chunkProgress.chunk} of {chunkProgress.total}
+      {#if phase === 'diarization'}
+        <span class="processing-dot"></span>
+        Assigning speakers...
+      {:else if chunkProgress}
+        <div class="progress-section">
+          <div class="progress-bar">
+            <div class="progress-fill" style="width: {progressPercent}%"></div>
+          </div>
+          <span class="progress-label">
+            Transcribing {chunkProgress.chunk} / {chunkProgress.total} chunks{etaText ? ` — ${etaText}` : ''}
+          </span>
+        </div>
       {:else}
+        <span class="processing-dot"></span>
         Processing audio...
       {/if}
     </div>
@@ -470,6 +531,33 @@
   @keyframes processingPulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.3; }
+  }
+
+  .progress-section {
+    width: 100%;
+  }
+
+  .progress-bar {
+    width: 100%;
+    height: 12px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 0.5rem;
+  }
+
+  .progress-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 5px;
+    transition: width 0.4s ease;
+    min-width: 4px;
+  }
+
+  .progress-label {
+    font-size: 0.85rem;
+    color: var(--text-muted);
   }
 
   .speakers-label {

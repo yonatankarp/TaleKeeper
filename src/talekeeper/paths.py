@@ -63,3 +63,13 @@ def get_audio_dir() -> Path:
 
 def get_campaign_audio_dir(campaign_id: int) -> Path:
     return get_audio_dir() / str(campaign_id)
+
+
+def get_images_dir() -> Path:
+    return get_user_data_dir() / "images"
+
+
+def get_session_images_dir(session_id: int) -> Path:
+    d = get_images_dir() / str(session_id)
+    d.mkdir(parents=True, exist_ok=True)
+    return d

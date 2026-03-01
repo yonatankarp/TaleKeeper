@@ -5,6 +5,7 @@
   import AudioPlayer from '../components/AudioPlayer.svelte';
   import SummarySection from '../components/SummarySection.svelte';
   import ExportSection from '../components/ExportSection.svelte';
+  import IllustrationsSection from '../components/IllustrationsSection.svelte';
   import SpeakerPanel from '../components/SpeakerPanel.svelte';
   import Spinner from '../components/Spinner.svelte';
 
@@ -57,11 +58,12 @@
 
   $effect(() => { load(); });
 
-  const tabs = ['recording', 'transcript', 'summaries', 'export'] as const;
+  const tabs = ['recording', 'transcript', 'summaries', 'illustrations', 'export'] as const;
   const tabLabels: Record<string, string> = {
     recording: 'Recording',
     transcript: 'Chronicle',
     summaries: 'Tales',
+    illustrations: 'Visions',
     export: 'Export',
   };
 
@@ -109,6 +111,8 @@
             <svg class="tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2 2 0 012 2v2a2 2 0 01-2 2H7a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2"/><path d="M8 7V5a2 2 0 00-2-2"/><path d="M16 17v2a2 2 0 002 2"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="14" x2="13" y2="14"/></svg>
           {:else if tab === 'summaries'}
             <svg class="tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
+          {:else if tab === 'illustrations'}
+            <svg class="tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/></svg>
           {:else if tab === 'export'}
             <svg class="tab-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 7l-10 7L2 7"/></svg>
           {/if}
@@ -141,6 +145,9 @@
       </div>
       <div class:hidden={activeTab !== 'summaries'}>
         <SummarySection sessionId={sessionId} />
+      </div>
+      <div class:hidden={activeTab !== 'illustrations'}>
+        <IllustrationsSection sessionId={sessionId} />
       </div>
       <div class:hidden={activeTab !== 'export'}>
         <ExportSection sessionId={sessionId} />

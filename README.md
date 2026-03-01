@@ -12,10 +12,7 @@ TaleKeeper captures audio from your game table, transcribes speech on-device usi
   ```
   brew install ffmpeg
   ```
-- **Ollama** (optional) — for AI-powered session summaries
-  ```
-  brew install ollama
-  ```
+- **Ollama** (optional) — for AI-powered session summaries and image generation. Install the [official macOS app](https://ollama.com/download/mac) (not Homebrew — the brew formula lacks MLX support needed for image generation).
 ## Quick Start
 
 ### 1. Clone and install
@@ -79,6 +76,33 @@ docker compose exec ollama ollama pull llama3.1:8b
 
 Data is persisted via bind-mounts (`./data/db` and `./data/audio`) and a named volume for Ollama models, so nothing is lost when containers restart.
 
+## Image Generation
+
+TaleKeeper can generate scene illustrations from your session content using a local AI image generation model. It uses Ollama's OpenAI-compatible `/v1/images/generations` endpoint — the same Ollama instance used for text summaries.
+
+### Setup
+
+Install Ollama from the [official macOS app](https://ollama.com/download/mac), then pull an image generation model:
+
+```bash
+ollama pull x/flux2-klein:9b
+```
+
+The Docker Compose stack pulls this model automatically on first start.
+
+**Important:** Do not use `brew install ollama` — the Homebrew formula does not include MLX support, which is required for image generation on Apple Silicon.
+
+**Note:** Ollama image generation currently requires macOS with Apple Silicon. Windows and Linux support is coming soon.
+
+### Custom provider
+
+You can use any OpenAI-compatible image generation API. Configure the provider in the Settings page:
+- **Base URL** — e.g., `http://localhost:7860/v1`
+- **API Key** — if required by your provider
+- **Model** — the model name your provider expects
+
+Environment variables `IMAGE_BASE_URL`, `IMAGE_API_KEY`, and `IMAGE_MODEL` also work.
+
 ## Development
 
 Run the backend and frontend dev servers in separate terminals:
@@ -130,6 +154,7 @@ All data lives in the `data/` directory relative to where you run the server:
 data/
   db/talekeeper.db    SQLite database (campaigns, transcripts, summaries)
   audio/<campaign-id>/ Recorded audio files (.webm)
+  images/<session-id>/ Generated scene illustrations (.png)
 ```
 
 Back up this folder to preserve your recordings and transcripts.

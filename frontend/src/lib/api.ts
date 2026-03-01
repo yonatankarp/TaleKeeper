@@ -47,6 +47,7 @@ export function processAudio(
   onDone: (segmentsCount: number) => void,
   onError: (message: string) => void,
   numSpeakers?: number,
+  onPhase?: (phase: string) => void,
 ): { cancel: () => void } {
   let cancelled = false;
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -80,6 +81,7 @@ export function processAudio(
             const data = JSON.parse(line.slice(6));
             if (currentEvent === 'progress') onProgress(data.chunk, data.total_chunks);
             else if (currentEvent === 'segment') onSegment(data);
+            else if (currentEvent === 'phase') onPhase?.(data.phase);
             else if (currentEvent === 'done') { gotDoneOrError = true; onDone(data.segments_count); }
             else if (currentEvent === 'error') { gotDoneOrError = true; onError(data.message || 'Processing failed'); }
             currentEvent = '';

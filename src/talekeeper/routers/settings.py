@@ -39,7 +39,7 @@ def _decrypt(value: str) -> str:
     return decrypted.decode()
 
 
-SENSITIVE_KEYS = {"smtp_password", "llm_api_key"}
+SENSITIVE_KEYS = {"smtp_password", "llm_api_key", "image_api_key"}
 
 
 @router.get("")

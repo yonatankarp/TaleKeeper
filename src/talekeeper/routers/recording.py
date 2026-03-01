@@ -26,6 +26,7 @@ async def _run_transcription_on_chunk(
     websocket: WebSocket,
     cumulative_offset: float,
     language: str = "en",
+    model_size: str = "medium",
 ) -> float:
     """Transcribe the new audio since the last transcription.
 
@@ -64,7 +65,7 @@ async def _run_transcription_on_chunk(
         try:
             new_portion.set_channels(1).set_frame_rate(16000).export(str(wav_path), format="wav")
 
-            segments = transcribe(wav_path, language=language)
+            segments = transcribe(wav_path, model_size=model_size, language=language)
 
             for seg in segments:
                 await websocket.send_json({
@@ -113,11 +114,13 @@ async def recording_ws(websocket: WebSocket, session_id: int) -> None:
         campaign_id = session["campaign_id"]
         session_language = session.get("language", "en")
 
-        # Read global live_transcription setting
+        # Read global settings
         setting_rows = await db.execute_fetchall(
-            "SELECT value FROM settings WHERE key = 'live_transcription'"
+            "SELECT key, value FROM settings WHERE key IN ('live_transcription', 'whisper_model')"
         )
-        live_transcription = setting_rows[0]["value"] == "true" if setting_rows else False
+        settings_map = {row["key"]: row["value"] for row in setting_rows}
+        live_transcription = settings_map.get("live_transcription") == "true"
+        whisper_model = settings_map.get("whisper_model", "medium")
 
         # Update session status to recording
         await db.execute(
@@ -160,7 +163,7 @@ async def recording_ws(websocket: WebSocket, session_id: int) -> None:
                         transcription_in_progress = True
                         try:
                             new_offset = await _run_transcription_on_chunk(
-                                chunk_dir, ci, session_id, websocket, offset, session_language
+                                chunk_dir, ci, session_id, websocket, offset, session_language, whisper_model
                             )
                             cumulative_offset = new_offset
                         finally:
@@ -319,6 +322,11 @@ async def process_audio(session_id: int, num_speakers: int | None = Query(defaul
 
         language = session.get("language", "en")
 
+        model_rows = await db.execute_fetchall(
+            "SELECT value FROM settings WHERE key = 'whisper_model'"
+        )
+        model_size = model_rows[0]["value"] if model_rows else "medium"
+
     async def sse_generator() -> AsyncIterator[str]:
         segments_count = 0
         try:
@@ -335,7 +343,7 @@ async def process_audio(session_id: int, num_speakers: int | None = Query(defaul
                     (session_id,),
                 )
 
-            for item in transcribe_chunked(audio_path, language=language):
+            for item in transcribe_chunked(audio_path, model_size=model_size, language=language):
                 if isinstance(item, ChunkProgress):
                     yield _sse_event("progress", {
                         "chunk": item.chunk,
@@ -354,6 +362,9 @@ async def process_audio(session_id: int, num_speakers: int | None = Query(defaul
                         "end_time": item.end_time,
                     })
                     segments_count += 1
+
+            # Signal phase change to frontend
+            yield _sse_event("phase", {"phase": "diarization"})
 
             # Run speaker diarization
             from talekeeper.services.diarization import run_final_diarization

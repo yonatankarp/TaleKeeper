@@ -9,7 +9,7 @@
   let { campaignId }: Props = $props();
 
   type Campaign = { id: number; name: string; description: string; language: string; num_speakers: number };
-  type Session = { id: number; name: string; date: string; status: string; audio_path: string | null };
+  type Session = { id: number; name: string; date: string; status: string; audio_path: string | null; transcript_count: number; summary_count: number; image_count: number };
   type Dashboard = { session_count: number; total_recorded_time: number; most_recent_session_date: string | null };
 
   let campaign = $state<Campaign | null>(null);
@@ -156,6 +156,15 @@
             {#if s.audio_path}
               <span class="badge badge-audio">Audio</span>
             {/if}
+            {#if s.transcript_count > 0}
+              <span class="badge badge-transcript">Transcript</span>
+            {/if}
+            {#if s.summary_count > 0}
+              <span class="badge badge-summary">Summary</span>
+            {/if}
+            {#if s.image_count > 0}
+              <span class="badge badge-images">Images ({s.image_count})</span>
+            {/if}
             <button class="btn btn-sm btn-danger" onclick={() => (confirmDeleteSessionId = s.id)}>Delete</button>
           </div>
         </div>
@@ -270,6 +279,9 @@
   .badge-transcribing { background: var(--warning); color: var(--bg-body); }
   .badge-completed { background: var(--success); color: #fff; }
   .badge-audio { background: var(--btn-blue); color: #fff; }
+  .badge-transcript { background: #5b6abf; color: #fff; }
+  .badge-summary { background: #7b5ea7; color: #fff; }
+  .badge-images { background: #c2703e; color: #fff; }
 
   .card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; transition: box-shadow 0.2s ease; }
   .card:hover { box-shadow: 0 0 8px rgba(212, 164, 56, 0.15); }

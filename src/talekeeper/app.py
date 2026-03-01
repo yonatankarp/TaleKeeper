@@ -11,7 +11,7 @@ from pathlib import Path
 
 from talekeeper.db import init_db
 from talekeeper.paths import get_audio_dir, set_user_data_dir
-from talekeeper.routers import campaigns, sessions, roster, recording, transcripts, speakers, summaries, exports, settings, voice_signatures
+from talekeeper.routers import campaigns, sessions, roster, recording, transcripts, speakers, summaries, exports, settings, voice_signatures, images
 
 
 def _cleanup_orphaned_chunk_dirs() -> None:
@@ -69,6 +69,7 @@ app.include_router(summaries.router)
 app.include_router(exports.router)
 app.include_router(settings.router)
 app.include_router(voice_signatures.router)
+app.include_router(images.router)
 
 STATIC_DIR = Path(__file__).parent / "static"
 

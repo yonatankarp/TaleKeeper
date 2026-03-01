@@ -8,6 +8,8 @@
   let toast = $state<string | null>(null);
   let testingLlm = $state(false);
   let llmResult = $state<string | null>(null);
+  let testingImage = $state(false);
+  let imageResult = $state<string | null>(null);
 
   const whisperModels = ['tiny', 'base', 'small', 'medium', 'large-v3'];
 
@@ -17,6 +19,9 @@
     if (!settings.llm_base_url) settings.llm_base_url = '';
     if (!settings.llm_api_key) settings.llm_api_key = '';
     if (!settings.llm_model) settings.llm_model = '';
+    if (!settings.image_base_url) settings.image_base_url = '';
+    if (!settings.image_api_key) settings.image_api_key = '';
+    if (!settings.image_model) settings.image_model = '';
     if (!settings.live_transcription) settings.live_transcription = 'false';
     if (!settings.data_dir) settings.data_dir = '';
     pageLoading = false;
@@ -38,6 +43,20 @@
       llmResult = 'Cannot reach LLM provider. Check your settings.';
     } finally {
       testingLlm = false;
+    }
+  }
+
+  async function testImage() {
+    testingImage = true;
+    try {
+      const status = await api.get<{ status: string; message?: string }>('/settings/image-health');
+      imageResult = status.status === 'ok'
+        ? 'Connected! Image provider is reachable.'
+        : `Error: ${status.message}`;
+    } catch {
+      imageResult = 'Cannot reach image provider. Check your settings.';
+    } finally {
+      testingImage = false;
     }
   }
 
@@ -102,6 +121,31 @@
       </button>
       {#if llmResult}
         <span class="test-result">{llmResult}</span>
+      {/if}
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>Image Generation</h3>
+    <p class="hint" style="margin-bottom: 0.75rem;">Configure an OpenAI-compatible image generation provider. Leave fields empty to use defaults (Ollama at localhost:11434, model x/flux2-klein:9b). You can also use cloud providers like OpenAI (dall-e-3).</p>
+    <label>
+      Base URL
+      <input type="text" bind:value={settings.image_base_url} placeholder="http://localhost:11434/v1" />
+    </label>
+    <label>
+      API Key
+      <input type="password" bind:value={settings.image_api_key} placeholder="Not required for local providers" />
+    </label>
+    <label>
+      Model
+      <input type="text" bind:value={settings.image_model} placeholder="x/flux2-klein:9b" />
+    </label>
+    <div class="action-row">
+      <button class="btn" onclick={testImage} disabled={testingImage}>
+        {testingImage ? 'Testing...' : 'Test Connection'}
+      </button>
+      {#if imageResult}
+        <span class="test-result">{imageResult}</span>
       {/if}
     </div>
   </div>

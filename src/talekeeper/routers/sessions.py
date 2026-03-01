@@ -62,7 +62,13 @@ async def create_session(campaign_id: int, body: SessionCreate) -> dict:
 async def list_sessions(campaign_id: int) -> list[dict]:
     async with get_db() as db:
         rows = await db.execute_fetchall(
-            "SELECT * FROM sessions WHERE campaign_id = ? ORDER BY date DESC",
+            """SELECT s.*,
+                      (SELECT COUNT(*) FROM transcript_segments ts WHERE ts.session_id = s.id) AS transcript_count,
+                      (SELECT COUNT(*) FROM summaries sm WHERE sm.session_id = s.id) AS summary_count,
+                      (SELECT COUNT(*) FROM session_images si WHERE si.session_id = s.id) AS image_count
+               FROM sessions s
+               WHERE s.campaign_id = ?
+               ORDER BY s.date DESC""",
             (campaign_id,),
         )
     return [dict(r) for r in rows]

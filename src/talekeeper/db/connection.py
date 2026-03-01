@@ -27,6 +27,26 @@ async def _apply_schema(db: aiosqlite.Connection) -> None:
     await _migrate_add_language_columns(db)
     await _migrate_add_num_speakers_column(db)
     await _migrate_add_voice_signatures_table(db)
+    await _migrate_add_session_images_table(db)
+
+
+async def _migrate_add_session_images_table(db: aiosqlite.Connection) -> None:
+    """Create session_images table if it doesn't exist (for pre-existing databases)."""
+    tables = await db.execute_fetchall(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='session_images'"
+    )
+    if not tables:
+        await db.execute("""
+            CREATE TABLE session_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                file_path TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                scene_description TEXT,
+                model_used TEXT,
+                generated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
 
 
 async def _migrate_add_language_columns(db: aiosqlite.Connection) -> None:
@@ -148,6 +168,16 @@ CREATE TABLE IF NOT EXISTS voice_signatures (
     source_session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
     num_samples INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS session_images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    file_path TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    scene_description TEXT,
+    model_used TEXT,
+    generated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS settings (

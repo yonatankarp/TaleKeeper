@@ -2,7 +2,7 @@
 
 from talekeeper.db import get_db
 from talekeeper.paths import get_user_data_dir, get_db_dir
-from talekeeper.services import llm_client
+from talekeeper.services import llm_client, image_client
 
 
 async def check_first_run() -> dict:
@@ -21,6 +21,14 @@ async def check_first_run() -> dict:
         checks["llm_connected"] = health["status"] == "ok"
     except Exception:
         checks["llm_connected"] = False
+
+    # Check image provider
+    try:
+        img_config = await image_client.resolve_config()
+        img_health = await image_client.health_check(img_config["base_url"], img_config["api_key"], img_config["model"])
+        checks["image_connected"] = img_health["status"] == "ok"
+    except Exception:
+        checks["image_connected"] = False
 
     # Only show wizard automatically if user has never dismissed it
     async with get_db() as db:
