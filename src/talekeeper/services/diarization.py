@@ -74,9 +74,11 @@ def _get_encoder():
     except Exception:
         pass
 
+    from talekeeper.paths import get_models_dir
+
     _encoder = EncoderClassifier.from_hparams(
         source="speechbrain/spkrec-ecapa-voxceleb",
-        savedir="data/models/spkrec-ecapa-voxceleb",
+        savedir=str(get_models_dir() / "spkrec-ecapa-voxceleb"),
         run_opts={"device": device},
     )
 

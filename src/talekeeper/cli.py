@@ -3,16 +3,13 @@
 import argparse
 import sys
 import webbrowser
-from pathlib import Path
 
-DATA_DIR = Path("data")
-AUDIO_DIR = DATA_DIR / "audio"
-DB_DIR = DATA_DIR / "db"
+from talekeeper.paths import get_db_dir, get_audio_dir
 
 
 def ensure_data_dirs() -> None:
-    AUDIO_DIR.mkdir(parents=True, exist_ok=True)
-    DB_DIR.mkdir(parents=True, exist_ok=True)
+    get_audio_dir().mkdir(parents=True, exist_ok=True)
+    get_db_dir().mkdir(parents=True, exist_ok=True)
 
 
 def cmd_serve(args: argparse.Namespace) -> None:

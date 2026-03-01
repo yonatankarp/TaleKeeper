@@ -8,6 +8,7 @@
   import SetupWizard from './components/SetupWizard.svelte';
   import { matchRoute, navigate } from './lib/router.svelte';
   import { api } from './lib/api';
+  import { wizard } from './lib/wizard.svelte';
   import './lib/theme.svelte';
 
   const routes = [
@@ -20,7 +21,6 @@
 
   let currentPath = $state(window.location.hash.slice(1) || '/');
   let matched = $derived(matchRoute(currentPath, routes));
-  let showWizard = $state(false);
   let globalError = $state<string | null>(null);
 
   // Breadcrumb state
@@ -74,7 +74,7 @@
     try {
       const status = await api.get<{ is_first_run: boolean }>('/setup-status');
       if (status.is_first_run) {
-        showWizard = true;
+        wizard.show();
       }
     } catch {
       // Server not ready yet, ignore
@@ -93,8 +93,8 @@
 
 <svelte:window onhashchange={onHashChange} onunhandledrejection={handleError} />
 
-{#if showWizard}
-  <SetupWizard onDismiss={() => (showWizard = false)} />
+{#if wizard.open}
+  <SetupWizard onDismiss={() => wizard.hide()} />
 {/if}
 
 {#if globalError}

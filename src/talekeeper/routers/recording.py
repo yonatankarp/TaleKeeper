@@ -11,6 +11,7 @@ from fastapi import APIRouter, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
 
 from talekeeper.db import get_db
+from talekeeper.paths import get_campaign_audio_dir
 
 router = APIRouter(tags=["recording"])
 
@@ -127,7 +128,7 @@ async def recording_ws(websocket: WebSocket, session_id: int) -> None:
     _active_recording_session = session_id
 
     # Prepare audio paths
-    audio_dir = Path(f"data/audio/{campaign_id}")
+    audio_dir = get_campaign_audio_dir(campaign_id)
     audio_dir.mkdir(parents=True, exist_ok=True)
     audio_path = audio_dir / f"{session_id}.webm"
 
@@ -269,8 +270,8 @@ async def upload_audio(session_id: int, file: UploadFile) -> dict:
                 "DELETE FROM speakers WHERE session_id = ?", (session_id,)
             )
 
-    # Save file to data/audio/{campaign_id}/{session_id}.{ext}
-    audio_dir = Path(f"data/audio/{campaign_id}")
+    # Save file to audio_dir/{campaign_id}/{session_id}.{ext}
+    audio_dir = get_campaign_audio_dir(campaign_id)
     audio_dir.mkdir(parents=True, exist_ok=True)
     audio_path = audio_dir / f"{session_id}{ext}"
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from '../lib/api';
+  import Spinner from './Spinner.svelte';
 
   type Props = { onDismiss: () => void };
   let { onDismiss }: Props = $props();
@@ -8,54 +9,53 @@
     is_first_run: boolean;
     data_dir_exists: boolean;
     llm_connected: boolean;
+    data_dir: string;
   };
 
   let status = $state<SetupStatus | null>(null);
   let showDataInfo = $state(false);
   let showLlmInfo = $state(false);
-  let saving = $state(false);
-  let testing = $state(false);
-  let testResult = $state<string | null>(null);
+  let checking = $state(false);
 
   let llmBaseUrl = $state('');
   let llmApiKey = $state('');
   let llmModel = $state('');
+  let dataDir = $state('');
 
   async function load() {
     status = await api.get<SetupStatus>('/setup-status');
-    // Load existing settings to pre-fill
     const settings = await api.get<Record<string, string>>('/settings');
     llmBaseUrl = settings.llm_base_url || '';
     llmApiKey = settings.llm_api_key || '';
     llmModel = settings.llm_model || '';
+    dataDir = settings.data_dir || '';
   }
 
-  async function saveAndTest() {
-    saving = true;
-    testResult = null;
+  async function saveAndRecheck() {
+    checking = true;
     try {
       await api.put('/settings', {
         settings: {
           llm_base_url: llmBaseUrl,
           llm_api_key: llmApiKey,
           llm_model: llmModel,
+          data_dir: dataDir,
         },
       });
-      saving = false;
-      testing = true;
-      const result = await api.get<{ status: string; message?: string }>('/llm/status');
-      if (result.status === 'ok') {
-        testResult = 'ok';
-        status = await api.get<SetupStatus>('/setup-status');
-      } else {
-        testResult = result.message || 'Connection failed';
-      }
-    } catch {
-      testResult = 'Could not save or test settings';
+      status = await api.get<SetupStatus>('/setup-status');
     } finally {
-      saving = false;
-      testing = false;
+      checking = false;
     }
+  }
+
+  async function dismiss() {
+    await api.put('/settings', { settings: { setup_dismissed: 'true' } });
+    onDismiss();
+  }
+
+  async function browseDataDir() {
+    const result = await api.post<{ path: string | null }>('/pick-directory');
+    if (result.path) dataDir = result.path;
   }
 
   $effect(() => { load(); });
@@ -69,8 +69,8 @@
     {#if status}
       <div class="checks">
         <div class="check" class:ok={status.data_dir_exists}>
-          <span class="icon">{status.data_dir_exists ? 'OK' : '--'}</span>
-          <div>
+          <span class="icon">{status.data_dir_exists ? '\u2713' : '\u2717'}</span>
+          <div class="data-section">
             <span>
               Data directory
               <button class="info-btn" onclick={() => (showDataInfo = !showDataInfo)} title="What is this?">
@@ -79,14 +79,24 @@
             </span>
             {#if showDataInfo}
               <div class="info-tooltip">
-                <p>This is where your recordings, transcripts, and summaries are stored (<code>data/</code> in the application directory). Back up this folder to preserve your data.</p>
+                <p>Your session recordings, transcripts, and summaries are all saved here. As long as this folder exists, your data is safe and will persist between sessions.</p>
               </div>
             {/if}
+            <div class="data-dir-config">
+              <label>
+                Path
+                <div class="input-with-browse">
+                  <input type="text" bind:value={dataDir} placeholder={status.data_dir} />
+                  <button class="btn btn-browse" type="button" onclick={browseDataDir}>Browse</button>
+                </div>
+              </label>
+              <span class="resolved-path">Current: <code>{status.data_dir}</code></span>
+            </div>
           </div>
         </div>
 
         <div class="check" class:ok={status.llm_connected}>
-          <span class="icon">{status.llm_connected ? 'OK' : '--'}</span>
+          <span class="icon">{status.llm_connected ? '\u2713' : '\u2717'}</span>
           <div class="llm-section">
             <span>
               LLM Provider (for summaries)
@@ -119,30 +129,16 @@
                 Model
                 <input type="text" bind:value={llmModel} placeholder="llama3.1:8b" />
               </label>
-              <div class="config-actions">
-                <button class="btn btn-sm" onclick={saveAndTest} disabled={saving || testing}>
-                  {#if saving}
-                    Saving...
-                  {:else if testing}
-                    Testing...
-                  {:else}
-                    Save & Test Connection
-                  {/if}
-                </button>
-                {#if testResult === 'ok'}
-                  <span class="test-ok">Connected!</span>
-                {:else if testResult}
-                  <span class="test-err">{testResult}</span>
-                {/if}
-              </div>
             </div>
           </div>
         </div>
       </div>
 
       <div class="actions">
-        <button class="btn" onclick={load}>Re-check</button>
-        <button class="btn btn-primary" onclick={onDismiss}>
+        <button class="btn" onclick={saveAndRecheck} disabled={checking}>
+          {#if checking}<Spinner size="14px" /> Checking...{:else}Re-check{/if}
+        </button>
+        <button class="btn btn-primary" onclick={dismiss}>
           {status.llm_connected ? 'Get Started' : 'Continue Anyway'}
         </button>
       </div>
@@ -206,7 +202,9 @@
   }
 
   .check.ok .icon { color: var(--success); }
+  .check:not(.ok) .icon { color: var(--danger); }
 
+  .data-section { flex: 1; min-width: 0; }
   .llm-section { flex: 1; min-width: 0; }
 
   .info-btn {
@@ -247,6 +245,57 @@
     font-size: 0.8rem;
   }
 
+  .data-dir-config {
+    margin-top: 0.5rem;
+  }
+
+  .data-dir-config label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 0.25rem;
+  }
+
+  .data-dir-config input {
+    display: block;
+    width: 100%;
+    padding: 0.35rem 0.5rem;
+    margin-top: 0.15rem;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.8rem;
+    box-sizing: border-box;
+  }
+
+  .input-with-browse {
+    display: flex;
+    gap: 0.35rem;
+    align-items: center;
+  }
+
+  .input-with-browse input { flex: 1; }
+
+  .btn-browse {
+    padding: 0.35rem 0.6rem;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .resolved-path {
+    font-size: 0.75rem;
+    color: var(--text-faint);
+  }
+
+  .resolved-path code {
+    background: var(--bg-input);
+    padding: 0.1rem 0.3rem;
+    border-radius: 3px;
+  }
+
   .llm-config {
     margin-top: 0.5rem;
   }
@@ -272,15 +321,6 @@
     box-sizing: border-box;
   }
 
-  .config-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-top: 0.25rem;
-  }
-
-  .test-ok { font-size: 0.8rem; color: var(--success); }
-  .test-err { font-size: 0.8rem; color: var(--danger); }
 
   .actions {
     display: flex;
@@ -304,7 +344,6 @@
     font-size: 0.85rem;
   }
 
-  .btn-sm { padding: 0.35rem 0.75rem; font-size: 0.8rem; }
   .btn:hover { background: var(--bg-hover); }
   .btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }

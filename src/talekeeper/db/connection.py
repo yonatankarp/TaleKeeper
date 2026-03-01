@@ -1,19 +1,19 @@
 """SQLite async connection management via aiosqlite."""
 
 import aiosqlite
-from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-DB_PATH = Path("data/db/talekeeper.db")
+from talekeeper.paths import get_db_path
 
 _connection: aiosqlite.Connection | None = None
 
 
 async def init_db() -> None:
     """Initialize the database: create tables and run migrations."""
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    async with aiosqlite.connect(DB_PATH) as db:
+    db_path = get_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    async with aiosqlite.connect(db_path) as db:
         db.row_factory = aiosqlite.Row
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute("PRAGMA foreign_keys=ON")
@@ -72,7 +72,7 @@ async def _migrate_add_voice_signatures_table(db: aiosqlite.Connection) -> None:
 @asynccontextmanager
 async def get_db() -> AsyncIterator[aiosqlite.Connection]:
     """Yield an async database connection."""
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with aiosqlite.connect(get_db_path()) as db:
         db.row_factory = aiosqlite.Row
         await db.execute("PRAGMA foreign_keys=ON")
         try:

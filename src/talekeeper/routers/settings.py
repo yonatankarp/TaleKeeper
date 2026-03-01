@@ -8,6 +8,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from talekeeper.db import get_db
+from talekeeper.paths import set_user_data_dir
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -75,4 +76,8 @@ async def update_settings(body: SettingsUpdate) -> dict:
                 "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?",
                 (key, store_value, store_value),
             )
+    # Keep in-process data_dir in sync
+    if "data_dir" in body.settings:
+        val = body.settings["data_dir"].strip() or None
+        set_user_data_dir(val)
     return {"updated": True}

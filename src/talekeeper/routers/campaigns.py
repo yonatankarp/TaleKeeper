@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from talekeeper.db import get_db
+from talekeeper.paths import get_campaign_audio_dir
 from talekeeper.services.transcription import SUPPORTED_LANGUAGES
 
 router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
@@ -134,10 +135,10 @@ async def delete_campaign(campaign_id: int) -> dict:
         await db.execute("DELETE FROM campaigns WHERE id = ?", (campaign_id,))
 
         # Clean up campaign audio directory
-        audio_dir = Path(f"data/audio/{campaign_id}")
-        if audio_dir.exists():
+        campaign_audio = get_campaign_audio_dir(campaign_id)
+        if campaign_audio.exists():
             import shutil
-            shutil.rmtree(audio_dir)
+            shutil.rmtree(campaign_audio)
 
     return {"deleted": True}
 

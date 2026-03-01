@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from '../lib/api';
   import Spinner from '../components/Spinner.svelte';
+  import { wizard } from '../lib/wizard.svelte';
 
   let settings = $state<Record<string, string>>({});
   let pageLoading = $state(true);
@@ -17,6 +18,7 @@
     if (!settings.llm_api_key) settings.llm_api_key = '';
     if (!settings.llm_model) settings.llm_model = '';
     if (!settings.live_transcription) settings.live_transcription = 'false';
+    if (!settings.data_dir) settings.data_dir = '';
     pageLoading = false;
   }
 
@@ -42,6 +44,11 @@
   function showToast(msg: string) {
     toast = msg;
     setTimeout(() => { toast = null; }, 3000);
+  }
+
+  async function browseDataDir() {
+    const result = await api.post<{ path: string | null }>('/pick-directory');
+    if (result.path) settings.data_dir = result.path;
   }
 
   $effect(() => { load(); });
@@ -125,10 +132,20 @@
 
   <div class="section">
     <h3>Data</h3>
-    <p class="info">Your data is stored at: <code>data/</code> in the application directory. Back up this folder to preserve your recordings, transcripts, and summaries.</p>
+    <label>
+      Data directory
+      <div class="input-with-browse">
+        <input type="text" bind:value={settings.data_dir} placeholder="data (default)" />
+        <button class="btn btn-browse" type="button" onclick={browseDataDir}>Browse</button>
+      </div>
+    </label>
+    <p class="hint">Where session recordings, transcripts, and summaries are stored. Leave blank for the default (<code>data</code>). Back up this folder to preserve your data.</p>
   </div>
 
-  <button class="btn btn-primary" onclick={save}>Save Settings</button>
+  <div class="bottom-actions">
+    <button class="btn btn-primary" onclick={save}>Save Settings</button>
+    <button class="btn" onclick={() => wizard.show()}>Run Setup Wizard</button>
+  </div>
 </div>
 {/if}
 
@@ -202,15 +219,19 @@
 
   .test-result { font-size: 0.85rem; color: var(--text-secondary); }
 
-  .info {
-    color: var(--text-muted);
-    font-size: 0.9rem;
+  .input-with-browse {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
   }
 
-  .info code {
-    background: var(--bg-input);
-    padding: 0.15rem 0.4rem;
-    border-radius: 3px;
+  .input-with-browse input { flex: 1; }
+
+  .btn-browse {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    flex-shrink: 0;
   }
 
   .toast {
@@ -232,6 +253,12 @@
     color: var(--text);
     cursor: pointer;
     font-size: 0.85rem;
+  }
+
+  .bottom-actions {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
   }
 
   .btn:hover { background: var(--bg-hover); }
