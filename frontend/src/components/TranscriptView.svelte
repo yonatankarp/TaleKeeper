@@ -206,7 +206,18 @@
 {#if (status === 'audio_ready' || status === 'transcribing') && !transcribing}
   <div class="processing-banner">
     <span class="processing-dot"></span>
-    {status === 'audio_ready' ? 'Preparing audio for transcription...' : 'Processing audio — transcribing and identifying speakers...'}
+    {#if segments.length > 0}
+      Segments below are a preview. The final transcript may differ after full processing (improved accuracy, speaker labels, etc.).
+    {:else}
+      Processing audio — transcribing and identifying speakers...
+    {/if}
+  </div>
+{/if}
+
+{#if transcribing || ((status === 'audio_ready' || status === 'transcribing') && !transcribing)}
+  <div class="time-hint">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    Transcription may take a few minutes, especially for longer sessions. Please be patient while the audio is being processed.
   </div>
 {/if}
 
@@ -452,6 +463,23 @@
   @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.3; }
+  }
+
+  .time-hint {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--warning);
+    background: var(--warning-bg);
+    border: 1px solid var(--warning);
+    border-radius: 6px;
+    padding: 0.6rem 1rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .time-hint svg {
+    flex-shrink: 0;
   }
 
   .retranscribe-bar {

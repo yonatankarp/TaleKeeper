@@ -152,6 +152,11 @@
     </button>
   </div>
 
+  <div class="gen-hint">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    Summary generation may take a few minutes, especially for longer sessions. Please be patient while the tale is being crafted.
+  </div>
+
   {#if fullSummaries.length > 0}
     <h3>Session Summary</h3>
     {#each fullSummaries as s}
@@ -327,6 +332,23 @@
   .btn-danger { color: var(--danger); }
   .btn-sm { padding: 0.25rem 0.75rem; font-size: 0.8rem; }
   .btn-group { display: flex; gap: 0.5rem; }
+
+  .gen-hint {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--warning);
+    background: var(--warning-bg);
+    border: 1px solid var(--warning);
+    border-radius: 6px;
+    padding: 0.6rem 1rem;
+    margin: 0;
+  }
+
+  .gen-hint svg {
+    flex-shrink: 0;
+  }
 
   .empty { color: var(--text-faint); text-align: center; padding: 2rem; }
 </style>

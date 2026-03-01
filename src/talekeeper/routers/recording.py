@@ -112,6 +112,12 @@ async def recording_ws(websocket: WebSocket, session_id: int) -> None:
         campaign_id = session["campaign_id"]
         session_language = session.get("language", "en")
 
+        # Read global live_transcription setting
+        setting_rows = await db.execute_fetchall(
+            "SELECT value FROM settings WHERE key = 'live_transcription'"
+        )
+        live_transcription = setting_rows[0]["value"] == "true" if setting_rows else False
+
         # Update session status to recording
         await db.execute(
             "UPDATE sessions SET status = 'recording', updated_at = datetime('now') WHERE id = ?",
@@ -144,8 +150,8 @@ async def recording_ws(websocket: WebSocket, session_id: int) -> None:
                 chunk_file.write_bytes(data["bytes"])
                 chunk_count += 1
 
-                # Run incremental transcription every ~10 chunks (skip if previous still running)
-                if chunk_count % 10 == 0 and not transcription_in_progress:
+                # Run incremental transcription every ~10 chunks (skip if previous still running or live transcription disabled)
+                if live_transcription and chunk_count % 10 == 0 and not transcription_in_progress:
                     current_chunk = chunk_count
 
                     async def _do_transcribe(ci: int, offset: float) -> None:

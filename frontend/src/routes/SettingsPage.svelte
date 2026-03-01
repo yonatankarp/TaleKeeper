@@ -14,6 +14,7 @@
     settings = await api.get<Record<string, string>>('/settings');
     if (!settings.whisper_model) settings.whisper_model = 'medium';
     if (!settings.ollama_model) settings.ollama_model = 'llama3.1:8b';
+    if (!settings.live_transcription) settings.live_transcription = 'false';
     pageLoading = false;
   }
 
@@ -64,6 +65,11 @@
         {/each}
       </select>
     </label>
+    <label class="checkbox-label">
+      <input type="checkbox" checked={settings.live_transcription === 'true'} onchange={(e: Event) => { settings.live_transcription = (e.target as HTMLInputElement).checked ? 'true' : 'false'; }} />
+      Live transcription during recording
+    </label>
+    <p class="hint">When enabled, preview segments appear during recording. These are preliminary — the final transcript may differ after full processing (improved accuracy, speaker labels, etc.).</p>
   </div>
 
   <div class="section">
@@ -156,6 +162,26 @@
   }
 
   select { cursor: pointer; }
+
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .checkbox-label input[type="checkbox"] {
+    width: auto;
+    margin: 0;
+  }
+
+  .hint {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: 0.25rem 0 0;
+  }
 
   .action-row {
     display: flex;
