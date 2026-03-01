@@ -154,8 +154,59 @@
       ws.close();
     }
     cleanup();
-    onStatusChange();
+    waitForAudioReadyAndProcess();
   }
+
+  async function waitForAudioReadyAndProcess() {
+    processing = true;
+    try {
+      // Poll until backend finishes merging chunks and sets status
+      while (true) {
+        const session = await api.get<{ status: string }>(`/sessions/${sessionId}`);
+        if (session.status === 'audio_ready') break;
+        if (session.status === 'draft') {
+          // Empty recording — no audio to process
+          processing = false;
+          onStatusChange();
+          return;
+        }
+        await new Promise(r => setTimeout(r, 1000));
+      }
+
+      onStatusChange();
+
+      processCanceller = processAudio(
+        sessionId,
+        (chunk, total) => { chunkProgress = { chunk, total }; },
+        (seg) => { onTranscriptSegment?.(seg); },
+        (_count) => {
+          processing = false;
+          chunkProgress = null;
+          processCanceller = null;
+          onStatusChange();
+        },
+        (message) => {
+          error = message;
+          processing = false;
+          chunkProgress = null;
+          processCanceller = null;
+          onStatusChange();
+        },
+        numSpeakers,
+      );
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Processing failed';
+      processing = false;
+      onStatusChange();
+    }
+  }
+
+  // Auto-resume processing if component mounts with audio_ready status
+  $effect(() => {
+    if (status === 'audio_ready' && !processing && !uploading && recordingState === 'idle') {
+      waitForAudioReadyAndProcess();
+    }
+  });
 
   function cleanup() {
     stopTimer();

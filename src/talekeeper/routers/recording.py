@@ -177,23 +177,14 @@ async def recording_ws(websocket: WebSocket, session_id: int) -> None:
         # Merge chunk files into the final .webm
         chunk_files = sorted(chunk_dir.glob("chunk_*.webm"))
         if chunk_files:
-            from talekeeper.services.audio import merge_chunk_files, webm_to_wav
+            from talekeeper.services.audio import merge_chunk_files
             merge_chunk_files(chunk_dir, audio_path)
 
             async with get_db() as db:
                 await db.execute(
-                    "UPDATE sessions SET audio_path = ?, status = 'completed', updated_at = datetime('now') WHERE id = ?",
+                    "UPDATE sessions SET audio_path = ?, status = 'audio_ready', updated_at = datetime('now') WHERE id = ?",
                     (str(audio_path), session_id),
                 )
-
-            # Run speaker diarization on the final audio
-            from talekeeper.services.diarization import run_final_diarization
-            wav_path = webm_to_wav(audio_path)
-            try:
-                await run_final_diarization(session_id, wav_path, num_speakers_override=num_speakers_override)
-            finally:
-                if wav_path.exists():
-                    wav_path.unlink()
         else:
             # No audio recorded, revert to draft and clean up
             if chunk_dir.exists():

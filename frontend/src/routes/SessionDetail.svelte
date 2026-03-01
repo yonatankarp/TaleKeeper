@@ -134,6 +134,7 @@
           isRecording={session.status === 'recording'}
           {hasAudio}
           language={session.language}
+          status={session.status}
           onSegmentClick={handleSegmentClick}
         />
       </div>

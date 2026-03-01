@@ -8,9 +8,10 @@
     isRecording?: boolean;
     hasAudio?: boolean;
     language?: string;
+    status?: string;
     onSegmentClick?: (startTime: number) => void;
   };
-  let { sessionId, campaignId, isRecording = false, hasAudio = false, language = 'en', onSegmentClick }: Props = $props();
+  let { sessionId, campaignId, isRecording = false, hasAudio = false, language = 'en', status, onSegmentClick }: Props = $props();
 
   type Segment = {
     id: number;
@@ -202,7 +203,14 @@
   <p class="error">{error}</p>
 {/if}
 
-{#if hasAudio && !isRecording}
+{#if (status === 'audio_ready' || status === 'transcribing') && !transcribing}
+  <div class="processing-banner">
+    <span class="processing-dot"></span>
+    {status === 'audio_ready' ? 'Preparing audio for transcription...' : 'Processing audio — transcribing and identifying speakers...'}
+  </div>
+{/if}
+
+{#if hasAudio && !isRecording && status !== 'transcribing' && status !== 'audio_ready'}
   <div class="retranscribe-bar">
     <LanguageSelect compact value={retranscribeLang} onchange={(code) => (retranscribeLang = code)} />
     <label class="speakers-label">Speakers
@@ -417,6 +425,33 @@
     border-radius: 6px;
     font-size: 0.85rem;
     margin-bottom: 0.5rem;
+  }
+
+  .processing-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.6rem 1rem;
+    background: var(--bg-surface);
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  .processing-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--accent);
+    border-radius: 50%;
+    flex-shrink: 0;
+    animation: pulse 1s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
   }
 
   .retranscribe-bar {
