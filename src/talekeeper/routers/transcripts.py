@@ -6,7 +6,7 @@ from typing import AsyncIterator
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from talekeeper.db import get_db
 from talekeeper.services.transcription import SUPPORTED_LANGUAGES
@@ -17,6 +17,7 @@ router = APIRouter(tags=["transcripts"])
 class RetranscribeRequest(BaseModel):
     model_size: str = "medium"
     language: str | None = None
+    num_speakers: int | None = Field(default=None, ge=1, le=10)
 
     @field_validator("language")
     @classmethod
@@ -69,6 +70,7 @@ async def retranscribe(session_id: int, body: RetranscribeRequest) -> StreamingR
             raise HTTPException(status_code=404, detail="Audio file not found")
 
         language = body.language if body.language is not None else session.get("language", "en")
+        num_speakers_override = body.num_speakers
 
     async def sse_generator() -> AsyncIterator[str]:
         segments_count = 0
@@ -112,7 +114,7 @@ async def retranscribe(session_id: int, body: RetranscribeRequest) -> StreamingR
             from talekeeper.services.audio import webm_to_wav
             wav_path = webm_to_wav(audio_path)
             try:
-                await run_final_diarization(session_id, wav_path)
+                await run_final_diarization(session_id, wav_path, num_speakers_override=num_speakers_override)
             finally:
                 if wav_path.exists():
                     wav_path.unlink()

@@ -118,11 +118,11 @@
 
     <div class="tab-content">
       <div class:hidden={activeTab !== 'recording'}>
-        <RecordingControls sessionId={sessionId} status={session.status} onStatusChange={load} onRecordingStateChange={handleRecordingStateChange} onTranscriptSegment={handleTranscriptSegment} />
+        <RecordingControls sessionId={sessionId} campaignId={session.campaign_id} status={session.status} onStatusChange={load} onRecordingStateChange={handleRecordingStateChange} onTranscriptSegment={handleTranscriptSegment} />
       </div>
       <div class:hidden={activeTab !== 'transcript'}>
         {#if session}
-          <SpeakerPanel sessionId={sessionId} campaignId={session.campaign_id} onUpdate={() => {}} />
+          <SpeakerPanel sessionId={sessionId} campaignId={session.campaign_id} hasAudio={hasAudio} onUpdate={() => transcriptView?.load()} />
         {/if}
         {#if hasAudio}
           <AudioPlayer bind:this={audioPlayer} sessionId={sessionId} />
@@ -130,6 +130,7 @@
         <TranscriptView
           bind:this={transcriptView}
           sessionId={sessionId}
+          campaignId={session.campaign_id}
           isRecording={session.status === 'recording'}
           {hasAudio}
           language={session.language}

@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import APIRouter, UploadFile, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import APIRouter, Query, UploadFile, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 
 from talekeeper.db import get_db
@@ -132,6 +132,7 @@ async def recording_ws(websocket: WebSocket, session_id: int) -> None:
     chunk_count = 0
     cumulative_offset = 0.0
     transcription_in_progress = False
+    num_speakers_override: int | None = None
 
     try:
         while True:
@@ -162,6 +163,11 @@ async def recording_ws(websocket: WebSocket, session_id: int) -> None:
             elif "text" in data:
                 msg = json.loads(data["text"])
                 if msg.get("type") == "stop":
+                    num_speakers_override = msg.get("num_speakers")
+                    if num_speakers_override is not None:
+                        num_speakers_override = int(num_speakers_override)
+                        if not (1 <= num_speakers_override <= 10):
+                            num_speakers_override = None
                     break
     except WebSocketDisconnect:
         pass
@@ -184,7 +190,7 @@ async def recording_ws(websocket: WebSocket, session_id: int) -> None:
             from talekeeper.services.diarization import run_final_diarization
             wav_path = webm_to_wav(audio_path)
             try:
-                await run_final_diarization(session_id, wav_path)
+                await run_final_diarization(session_id, wav_path, num_speakers_override=num_speakers_override)
             finally:
                 if wav_path.exists():
                     wav_path.unlink()
@@ -290,7 +296,7 @@ def _sse_event(event: str, data: dict) -> str:
 
 
 @router.post("/api/sessions/{session_id}/process-audio")
-async def process_audio(session_id: int) -> StreamingResponse:
+async def process_audio(session_id: int, num_speakers: int | None = Query(default=None, ge=1, le=10)) -> StreamingResponse:
     """Run transcription + diarization on uploaded audio, streaming progress via SSE."""
     from talekeeper.services.transcription import (
         transcribe_chunked,
@@ -357,7 +363,7 @@ async def process_audio(session_id: int) -> StreamingResponse:
 
             wav_path = audio_to_wav(audio_path)
             try:
-                await run_final_diarization(session_id, wav_path)
+                await run_final_diarization(session_id, wav_path, num_speakers_override=num_speakers)
             finally:
                 if wav_path.exists():
                     wav_path.unlink()

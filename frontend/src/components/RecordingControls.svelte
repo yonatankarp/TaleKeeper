@@ -1,14 +1,15 @@
 <script lang="ts">
-  import { uploadAudio, processAudio } from '../lib/api';
+  import { api, uploadAudio, processAudio } from '../lib/api';
 
   type Props = {
     sessionId: number;
+    campaignId?: number;
     status: string;
     onStatusChange: () => void;
     onRecordingStateChange?: (state: 'idle' | 'recording' | 'paused', elapsed: number) => void;
     onTranscriptSegment?: (seg: { text: string; start_time: number; end_time: number }) => void;
   };
-  let { sessionId, status, onStatusChange, onRecordingStateChange, onTranscriptSegment }: Props = $props();
+  let { sessionId, campaignId, status, onStatusChange, onRecordingStateChange, onTranscriptSegment }: Props = $props();
 
   let recordingState = $state<'idle' | 'recording' | 'paused'>('idle');
   let elapsed = $state(0);
@@ -16,6 +17,17 @@
   let mediaRecorder: MediaRecorder | null = null;
   let ws: WebSocket | null = null;
   let timerInterval: ReturnType<typeof setInterval> | null = null;
+
+  // Speaker count override
+  let numSpeakers = $state(5);
+
+  $effect(() => {
+    if (campaignId) {
+      api.get<{ num_speakers: number }>(`/campaigns/${campaignId}`).then(c => {
+        numSpeakers = c.num_speakers;
+      });
+    }
+  });
 
   // Upload state
   let uploading = $state(false);
@@ -138,7 +150,7 @@
       mediaRecorder.stop();
     }
     if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'stop' }));
+      ws.send(JSON.stringify({ type: 'stop', num_speakers: numSpeakers }));
       ws.close();
     }
     cleanup();
@@ -212,6 +224,7 @@
           processCanceller = null;
           onStatusChange();
         },
+        numSpeakers,
       );
     } catch (e) {
       error = e instanceof Error ? e.message : 'Upload failed';
@@ -261,6 +274,10 @@
     bind:this={fileInput}
     onchange={handleFileSelected}
   />
+
+  <label class="speakers-label">Speakers
+    <input type="number" min="1" max="10" bind:value={numSpeakers} class="speakers-input" />
+  </label>
 
   <div class="controls">
     {#if recordingState === 'idle' && !busy}
@@ -373,5 +390,25 @@
     color: var(--text-muted);
     font-size: 0.9rem;
     margin-bottom: 1rem;
+  }
+
+  .speakers-label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+  }
+
+  .speakers-input {
+    width: 3.5rem;
+    padding: 0.4rem 0.5rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 0.85rem;
+    text-align: center;
   }
 </style>

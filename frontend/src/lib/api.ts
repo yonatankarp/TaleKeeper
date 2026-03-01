@@ -46,13 +46,15 @@ export function processAudio(
   onSegment: (seg: { text: string; start_time: number; end_time: number }) => void,
   onDone: (segmentsCount: number) => void,
   onError: (message: string) => void,
+  numSpeakers?: number,
 ): { cancel: () => void } {
   let cancelled = false;
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
 
   (async () => {
     try {
-      const res = await fetch(`${BASE}/sessions/${sessionId}/process-audio`, {
+      const params = numSpeakers != null ? `?num_speakers=${numSpeakers}` : '';
+      const res = await fetch(`${BASE}/sessions/${sessionId}/process-audio${params}`, {
         method: 'POST',
       });
 

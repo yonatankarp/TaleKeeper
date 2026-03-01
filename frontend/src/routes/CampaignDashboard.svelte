@@ -8,7 +8,7 @@
   type Props = { campaignId: number };
   let { campaignId }: Props = $props();
 
-  type Campaign = { id: number; name: string; description: string; language: string };
+  type Campaign = { id: number; name: string; description: string; language: string; num_speakers: number };
   type Session = { id: number; name: string; date: string; status: string; audio_path: string | null };
   type Dashboard = { session_count: number; total_recorded_time: number; most_recent_session_date: string | null };
 
@@ -133,8 +133,9 @@
         <input type="text" placeholder="Session name" bind:value={newSessionName} class:input-error={sessionNameError} oninput={() => (sessionNameError = false)} />
         {#if sessionNameError}<p class="field-error">Session name is required</p>{/if}
         <input type="date" bind:value={newSessionDate} />
-        <label class="field-label">Language</label>
-        <LanguageSelect value={newSessionLang} onchange={(code) => (newSessionLang = code)} />
+        <label class="field-label">Language
+          <LanguageSelect value={newSessionLang} onchange={(code) => (newSessionLang = code)} />
+        </label>
         <div class="btn-group">
           <button class="btn btn-primary" onclick={createSession}>Create</button>
           <button class="btn" onclick={() => (showNewSession = false)}>Cancel</button>

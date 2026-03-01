@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from talekeeper.db import init_db
-from talekeeper.routers import campaigns, sessions, roster, recording, transcripts, speakers, summaries, exports, settings
+from talekeeper.routers import campaigns, sessions, roster, recording, transcripts, speakers, summaries, exports, settings, voice_signatures
 
 
 def _cleanup_orphaned_chunk_dirs() -> None:
@@ -59,6 +59,7 @@ app.include_router(speakers.router)
 app.include_router(summaries.router)
 app.include_router(exports.router)
 app.include_router(settings.router)
+app.include_router(voice_signatures.router)
 
 STATIC_DIR = Path(__file__).parent / "static"
 

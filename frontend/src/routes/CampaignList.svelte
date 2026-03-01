@@ -5,7 +5,7 @@
   import Spinner from '../components/Spinner.svelte';
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
 
-  type Campaign = { id: number; name: string; description: string; language: string; created_at: string };
+  type Campaign = { id: number; name: string; description: string; language: string; num_speakers: number; created_at: string };
 
   let campaigns = $state<Campaign[]>([]);
   let pageLoading = $state(true);
@@ -16,7 +16,9 @@
   let editName = $state('');
   let editDesc = $state('');
   let newLang = $state('en');
+  let newNumSpeakers = $state(5);
   let editLang = $state('en');
+  let editNumSpeakers = $state(5);
   let confirmDeleteId = $state<number | null>(null);
   let createNameError = $state(false);
 
@@ -31,10 +33,11 @@
       return;
     }
     createNameError = false;
-    await api.post('/campaigns', { name: newName, description: newDesc, language: newLang });
+    await api.post('/campaigns', { name: newName, description: newDesc, language: newLang, num_speakers: newNumSpeakers });
     newName = '';
     newDesc = '';
     newLang = 'en';
+    newNumSpeakers = 5;
     showCreate = false;
     await load();
   }
@@ -44,11 +47,12 @@
     editName = c.name;
     editDesc = c.description;
     editLang = c.language;
+    editNumSpeakers = c.num_speakers;
   }
 
   async function saveEdit() {
     if (editingId === null) return;
-    await api.put(`/campaigns/${editingId}`, { name: editName, description: editDesc, language: editLang });
+    await api.put(`/campaigns/${editingId}`, { name: editName, description: editDesc, language: editLang, num_speakers: editNumSpeakers });
     editingId = null;
     await load();
   }
@@ -76,8 +80,12 @@
       <input type="text" placeholder="Campaign name" bind:value={newName} class:input-error={createNameError} oninput={() => (createNameError = false)} />
       {#if createNameError}<p class="field-error">Campaign name is required</p>{/if}
       <textarea placeholder="Description (optional)" bind:value={newDesc}></textarea>
-      <label class="field-label">Language</label>
-      <LanguageSelect value={newLang} onchange={(code) => (newLang = code)} />
+      <label class="field-label">Language
+        <LanguageSelect value={newLang} onchange={(code) => (newLang = code)} />
+      </label>
+      <label class="field-label">Number of Speakers
+        <input type="number" min="1" max="10" bind:value={newNumSpeakers} />
+      </label>
       <div class="btn-group">
         <button class="btn btn-primary" onclick={create}>Create</button>
         <button class="btn" onclick={() => (showCreate = false)}>Cancel</button>
@@ -91,8 +99,12 @@
         {#if editingId === c.id}
           <input type="text" bind:value={editName} />
           <textarea bind:value={editDesc}></textarea>
-          <label class="field-label">Language</label>
-          <LanguageSelect value={editLang} onchange={(code) => (editLang = code)} />
+          <label class="field-label">Language
+            <LanguageSelect value={editLang} onchange={(code) => (editLang = code)} />
+          </label>
+          <label class="field-label">Number of Speakers
+            <input type="number" min="1" max="10" bind:value={editNumSpeakers} />
+          </label>
           <div class="btn-group">
             <button class="btn btn-primary" onclick={saveEdit}>Save</button>
             <button class="btn" onclick={() => (editingId = null)}>Cancel</button>

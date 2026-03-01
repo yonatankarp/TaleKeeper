@@ -108,27 +108,30 @@
       <div class="email-dialog">
         <h4>Share via Email</h4>
         <div class="email-field">
-          <label>Subject</label>
-          <div class="email-row">
-            <input type="text" class="readonly-field" bind:value={emailSubject} readonly />
-            <button class="btn btn-sm" onclick={() => copyToClipboard(emailSubject)}>Copy</button>
-          </div>
+          <label>Subject
+            <div class="email-row">
+              <input type="text" class="readonly-field" bind:value={emailSubject} readonly />
+              <button class="btn btn-sm" onclick={() => copyToClipboard(emailSubject)}>Copy</button>
+            </div>
+          </label>
         </div>
         <div class="email-field">
-          <label>Body</label>
-          <div class="email-row">
-            <textarea class="readonly-field" readonly>{emailBody}</textarea>
-            <button class="btn btn-sm" onclick={() => copyToClipboard(emailBody)}>Copy</button>
-          </div>
+          <label>Body
+            <div class="email-row">
+              <textarea class="readonly-field" readonly>{emailBody}</textarea>
+              <button class="btn btn-sm" onclick={() => copyToClipboard(emailBody)}>Copy</button>
+            </div>
+          </label>
         </div>
         <div class="email-field">
-          <label>Send directly (requires SMTP config)</label>
-          <div class="email-row">
-            <input type="email" placeholder="recipient@example.com" bind:value={emailTo} />
-            <button class="btn btn-primary btn-sm" onclick={sendEmail} disabled={sending}>
-              {sending ? 'Sending...' : 'Send'}
-            </button>
-          </div>
+          <label>Send directly (requires SMTP config)
+            <div class="email-row">
+              <input type="email" placeholder="recipient@example.com" bind:value={emailTo} />
+              <button class="btn btn-primary btn-sm" onclick={sendEmail} disabled={sending}>
+                {sending ? 'Sending...' : 'Send'}
+              </button>
+            </div>
+          </label>
         </div>
         <button class="btn btn-sm" onclick={() => (emailSummaryId = null)}>Close</button>
       </div>

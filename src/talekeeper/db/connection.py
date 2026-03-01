@@ -25,6 +25,8 @@ async def _apply_schema(db: aiosqlite.Connection) -> None:
     """Create all tables if they don't exist."""
     await db.executescript(_SCHEMA)
     await _migrate_add_language_columns(db)
+    await _migrate_add_num_speakers_column(db)
+    await _migrate_add_voice_signatures_table(db)
 
 
 async def _migrate_add_language_columns(db: aiosqlite.Connection) -> None:
@@ -36,6 +38,35 @@ async def _migrate_add_language_columns(db: aiosqlite.Connection) -> None:
             await db.execute(
                 f"ALTER TABLE {table} ADD COLUMN language TEXT NOT NULL DEFAULT 'en'"
             )
+
+
+async def _migrate_add_num_speakers_column(db: aiosqlite.Connection) -> None:
+    """Add num_speakers column to campaigns if missing."""
+    cols = await db.execute_fetchall("PRAGMA table_info(campaigns)")
+    col_names = [c["name"] for c in cols]
+    if "num_speakers" not in col_names:
+        await db.execute(
+            "ALTER TABLE campaigns ADD COLUMN num_speakers INTEGER NOT NULL DEFAULT 5"
+        )
+
+
+async def _migrate_add_voice_signatures_table(db: aiosqlite.Connection) -> None:
+    """Create voice_signatures table if it doesn't exist (for pre-existing databases)."""
+    tables = await db.execute_fetchall(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='voice_signatures'"
+    )
+    if not tables:
+        await db.execute("""
+            CREATE TABLE voice_signatures (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+                roster_entry_id INTEGER NOT NULL REFERENCES roster_entries(id) ON DELETE CASCADE,
+                embedding TEXT NOT NULL,
+                source_session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+                num_samples INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
 
 
 @asynccontextmanager
@@ -56,6 +87,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
     name TEXT NOT NULL,
     description TEXT DEFAULT '',
     language TEXT NOT NULL DEFAULT 'en',
+    num_speakers INTEGER NOT NULL DEFAULT 5,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -105,6 +137,16 @@ CREATE TABLE IF NOT EXISTS roster_entries (
     player_name TEXT NOT NULL,
     character_name TEXT NOT NULL,
     is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS voice_signatures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    roster_entry_id INTEGER NOT NULL REFERENCES roster_entries(id) ON DELETE CASCADE,
+    embedding TEXT NOT NULL,
+    source_session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+    num_samples INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

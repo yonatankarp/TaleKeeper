@@ -1,7 +1,7 @@
 """Campaign CRUD API endpoints."""
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from talekeeper.db import get_db
 from talekeeper.services.transcription import SUPPORTED_LANGUAGES
@@ -13,6 +13,7 @@ class CampaignCreate(BaseModel):
     name: str
     description: str = ""
     language: str = "en"
+    num_speakers: int = Field(default=5, ge=1, le=10)
 
     @field_validator("language")
     @classmethod
@@ -26,6 +27,7 @@ class CampaignUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     language: str | None = None
+    num_speakers: int | None = Field(default=None, ge=1, le=10)
 
     @field_validator("language")
     @classmethod
@@ -39,8 +41,8 @@ class CampaignUpdate(BaseModel):
 async def create_campaign(body: CampaignCreate) -> dict:
     async with get_db() as db:
         cursor = await db.execute(
-            "INSERT INTO campaigns (name, description, language) VALUES (?, ?, ?)",
-            (body.name, body.description, body.language),
+            "INSERT INTO campaigns (name, description, language, num_speakers) VALUES (?, ?, ?, ?)",
+            (body.name, body.description, body.language, body.num_speakers),
         )
         campaign_id = cursor.lastrowid
         row = await db.execute_fetchall(
@@ -89,6 +91,9 @@ async def update_campaign(campaign_id: int, body: CampaignUpdate) -> dict:
         if body.language is not None:
             fields.append("language = ?")
             values.append(body.language)
+        if body.num_speakers is not None:
+            fields.append("num_speakers = ?")
+            values.append(body.num_speakers)
 
         if fields:
             fields.append("updated_at = datetime('now')")
