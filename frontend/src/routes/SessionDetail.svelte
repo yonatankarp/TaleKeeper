@@ -25,6 +25,7 @@
   async function load() {
     session = await api.get<Session>(`/sessions/${sessionId}`);
     pageLoading = false;
+    transcriptView?.load();
   }
 
   function handleSegmentClick(startTime: number) {

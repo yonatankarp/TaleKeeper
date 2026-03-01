@@ -158,14 +158,15 @@
   }
 
   async function waitForAudioReadyAndProcess() {
+    processStarted = true;
     processing = true;
     try {
       // Poll until backend finishes merging chunks and sets status
       while (true) {
         const session = await api.get<{ status: string }>(`/sessions/${sessionId}`);
         if (session.status === 'audio_ready') break;
-        if (session.status === 'draft') {
-          // Empty recording — no audio to process
+        if (session.status !== 'recording') {
+          // draft (empty recording), completed, or transcribing — nothing to wait for
           processing = false;
           onStatusChange();
           return;
@@ -201,9 +202,12 @@
     }
   }
 
-  // Auto-resume processing if component mounts with audio_ready status
+  // Auto-resume processing if component mounts with audio_ready status (e.g. page refresh mid-process).
+  // processStarted prevents the effect from re-triggering after processAudio completes, when
+  // the status prop is still stale 'audio_ready' but the backend has already moved to 'completed'.
+  let processStarted = false;
   $effect(() => {
-    if (status === 'audio_ready' && !processing && !uploading && recordingState === 'idle') {
+    if (!processStarted && status === 'audio_ready' && !processing && !uploading && recordingState === 'idle') {
       waitForAudioReadyAndProcess();
     }
   });
@@ -305,11 +309,15 @@
   {/if}
 
   {#if uploading}
-    <div class="upload-status">Uploading...</div>
+    <div class="processing-banner">
+      <span class="processing-dot"></span>
+      Uploading...
+    </div>
   {/if}
 
   {#if processing}
-    <div class="upload-status">
+    <div class="processing-banner">
+      <span class="processing-dot"></span>
       {#if chunkProgress}
         Transcribing chunk {chunkProgress.chunk} of {chunkProgress.total}
       {:else}
@@ -437,10 +445,31 @@
     display: none;
   }
 
-  .upload-status {
-    color: var(--text-muted);
-    font-size: 0.9rem;
+  .processing-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.6rem 1rem;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
     margin-bottom: 1rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+  }
+
+  .processing-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--accent);
+    border-radius: 50%;
+    flex-shrink: 0;
+    animation: processingPulse 1s ease-in-out infinite;
+  }
+
+  @keyframes processingPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
   }
 
   .speakers-label {

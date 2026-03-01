@@ -69,6 +69,25 @@ export function processAudio(
 
       const decoder = new TextDecoder();
       let buffer = '';
+      let currentEvent = '';
+      let gotDoneOrError = false;
+
+      function processLines(lines: string[]) {
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith('data: ') && currentEvent) {
+            const data = JSON.parse(line.slice(6));
+            if (currentEvent === 'progress') onProgress(data.chunk, data.total_chunks);
+            else if (currentEvent === 'segment') onSegment(data);
+            else if (currentEvent === 'done') { gotDoneOrError = true; onDone(data.segments_count); }
+            else if (currentEvent === 'error') { gotDoneOrError = true; onError(data.message || 'Processing failed'); }
+            currentEvent = '';
+          } else if (line.trim() === '') {
+            currentEvent = '';
+          }
+        }
+      }
 
       while (!cancelled) {
         const { done, value } = await reader.read();
@@ -77,22 +96,17 @@ export function processAudio(
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() ?? '';
+        processLines(lines);
+      }
 
-        let currentEvent = '';
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            currentEvent = line.slice(7).trim();
-          } else if (line.startsWith('data: ') && currentEvent) {
-            const data = JSON.parse(line.slice(6));
-            if (currentEvent === 'progress') onProgress(data.chunk, data.total_chunks);
-            else if (currentEvent === 'segment') onSegment(data);
-            else if (currentEvent === 'done') onDone(data.segments_count);
-            else if (currentEvent === 'error') onError(data.message || 'Processing failed');
-            currentEvent = '';
-          } else if (line.trim() === '') {
-            currentEvent = '';
-          }
-        }
+      // Flush any remaining buffered content
+      if (buffer.trim()) {
+        processLines(buffer.split('\n'));
+      }
+
+      // If stream ended without a done/error event, signal completion
+      if (!cancelled && !gotDoneOrError) {
+        onDone(0);
       }
     } catch (e) {
       if (!cancelled) onError(e instanceof Error ? e.message : 'Processing failed');
