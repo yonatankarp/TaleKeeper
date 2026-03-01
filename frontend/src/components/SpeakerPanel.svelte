@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api } from '../lib/api';
+  import { api, mergeSpeakers } from '../lib/api';
 
   type Props = { sessionId: number; campaignId: number; hasAudio: boolean; onUpdate: () => void };
   let { sessionId, campaignId, hasAudio, onUpdate }: Props = $props();
@@ -20,6 +20,12 @@
 
   // Batch edit state: maps speaker id to { player_name, character_name }
   let edits = $state<Record<number, { player_name: string; character_name: string }>>({});
+
+  // Merge state
+  let mergeSourceId = $state<number | null>(null);
+  let mergeConfirm = $state<{ source: Speaker; target: Speaker; segmentCount: number; hasSignature: boolean } | null>(null);
+  let merging = $state(false);
+  let segmentCounts = $state<Record<number, number>>({});
 
   // Set of roster_entry_ids that have signatures
   let signatureRosterIds = $derived(new Set(signatures.map(s => s.roster_entry_id)));
@@ -57,12 +63,15 @@
     editing = true;
     collapsed = false;
     error = null;
+    loadSegmentCounts();
   }
 
   function cancelBatchEdit() {
     editing = false;
     edits = {};
     error = null;
+    mergeSourceId = null;
+    mergeConfirm = null;
   }
 
   function selectFromRoster(speakerId: number, entry: RosterEntry) {
@@ -112,6 +121,57 @@
       error = e instanceof Error ? e.message : 'Failed to generate voice signatures';
     } finally {
       generating = false;
+    }
+  }
+
+  async function loadSegmentCounts() {
+    type Segment = { speaker_id: number | null };
+    const segments = await api.get<Segment[]>(`/sessions/${sessionId}/transcript`);
+    const counts: Record<number, number> = {};
+    for (const seg of segments) {
+      if (seg.speaker_id != null) {
+        counts[seg.speaker_id] = (counts[seg.speaker_id] ?? 0) + 1;
+      }
+    }
+    segmentCounts = counts;
+  }
+
+  function startMerge(sourceId: number) {
+    mergeSourceId = sourceId;
+    mergeConfirm = null;
+  }
+
+  function cancelMerge() {
+    mergeSourceId = null;
+    mergeConfirm = null;
+  }
+
+  function selectMergeTarget(target: Speaker) {
+    const source = speakers.find(s => s.id === mergeSourceId);
+    if (!source) return;
+    mergeConfirm = {
+      source,
+      target,
+      segmentCount: segmentCounts[source.id] ?? 0,
+      hasSignature: hasSignature(source),
+    };
+    mergeSourceId = null;
+  }
+
+  async function confirmMerge() {
+    if (!mergeConfirm) return;
+    merging = true;
+    error = null;
+    try {
+      await mergeSpeakers(sessionId, mergeConfirm.source.id, mergeConfirm.target.id);
+      mergeConfirm = null;
+      await load();
+      await loadSegmentCounts();
+      onUpdate();
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to merge speakers';
+    } finally {
+      merging = false;
     }
   }
 
@@ -165,6 +225,25 @@
       <div class="success">{generateResult}</div>
     {/if}
 
+    {#if mergeConfirm}
+      <div class="merge-confirm">
+        <p>
+          <strong>{speakerDisplay(mergeConfirm.source)}</strong> will be merged into
+          <strong>{speakerDisplay(mergeConfirm.target)}</strong>.
+        </p>
+        <p>{mergeConfirm.segmentCount} segment{mergeConfirm.segmentCount !== 1 ? 's' : ''} will be reassigned. This action cannot be undone.</p>
+        {#if mergeConfirm.hasSignature}
+          <p class="merge-warning">The source speaker's voice signature will be deleted.</p>
+        {/if}
+        <div class="btn-group">
+          <button class="btn btn-danger" onclick={confirmMerge} disabled={merging}>
+            {merging ? 'Merging...' : 'Confirm'}
+          </button>
+          <button class="btn" onclick={() => { mergeConfirm = null; }} disabled={merging}>Cancel</button>
+        </div>
+      </div>
+    {/if}
+
     {#if editing}
       <div class="batch-form">
         {#each speakers as s}
@@ -183,6 +262,23 @@
                     </button>
                   {/each}
                 </div>
+              {/if}
+              {#if speakers.length > 1}
+                {#if mergeSourceId === s.id}
+                  <div class="merge-target-selector">
+                    <span class="merge-label">Merge into:</span>
+                    {#each speakers.filter(t => t.id !== s.id) as target}
+                      <button class="roster-btn" onclick={() => selectMergeTarget(target)}>
+                        {speakerDisplay(target)}
+                      </button>
+                    {/each}
+                    <button class="btn btn-sm" onclick={cancelMerge}>Cancel</button>
+                  </div>
+                {:else}
+                  <button class="btn btn-sm btn-merge" onclick={() => startMerge(s.id)} disabled={mergeSourceId !== null}>
+                    Merge into...
+                  </button>
+                {/if}
               {/if}
             </div>
           </div>
@@ -390,4 +486,37 @@
   .btn-group { display: flex; gap: 0.5rem; }
 
   .empty { color: var(--text-faint); font-size: 0.85rem; }
+
+  .btn-merge { color: var(--text-faint); border-color: var(--border); align-self: flex-start; }
+  .btn-merge:hover { color: var(--text); }
+  .btn-danger { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  .merge-target-selector {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .merge-label {
+    font-size: 0.8rem;
+    color: var(--text-faint);
+    margin-right: 0.25rem;
+  }
+
+  .merge-confirm {
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.85rem;
+  }
+
+  .merge-confirm p { margin: 0 0 0.5rem; }
+
+  .merge-warning {
+    color: var(--accent);
+    font-weight: 600;
+  }
 </style>

@@ -274,7 +274,7 @@ async def export_pdf(summary_id: int, printable: bool = False) -> Response:
     from weasyprint import HTML
 
     summary = await _get_summary_with_meta(summary_id)
-    image_bytes = await _get_latest_session_image(summary["session_id"])
+    image_bytes = None if printable else await _get_latest_session_image(summary["session_id"])
     content_html = _content_to_html(summary["content"])
     html = _build_pdf_html(summary, content_html, image_bytes, printable=printable)
 

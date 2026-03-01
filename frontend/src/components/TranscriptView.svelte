@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api } from '../lib/api';
+  import { api, reDiarize } from '../lib/api';
   import LanguageSelect from './LanguageSelect.svelte';
 
   type Props = {
@@ -27,6 +27,7 @@
   let segments = $state<Segment[]>([]);
   let container: HTMLDivElement | undefined = $state();
   let transcribing = $state(false);
+  let diarizing = $state(false);
   let error = $state<string | null>(null);
   let retranscribeLang = $state('en');
   let retranscribeNumSpeakers = $state(5);
@@ -134,6 +135,31 @@
     }
   }
 
+  function handleReDiarize() {
+    if (!confirm('Re-diarize this session?\n\nThis will remove all current speaker assignments and session voice signatures. Transcript text will be preserved.')) {
+      return;
+    }
+
+    diarizing = true;
+    error = null;
+
+    reDiarize(
+      sessionId,
+      retranscribeNumSpeakers,
+      (_phase) => {
+        // phase event received — diarization in progress
+      },
+      async (_segmentsCount) => {
+        diarizing = false;
+        await load();
+      },
+      (message) => {
+        error = message;
+        diarizing = false;
+      },
+    );
+  }
+
   // Listen for live transcript segments via WebSocket messages
   // The RecordingControls component sends transcript messages
   export function addLiveSegment(seg: { text: string; start_time: number; end_time: number }) {
@@ -221,14 +247,17 @@
   </div>
 {/if}
 
-{#if hasAudio && !isRecording && status !== 'transcribing' && status !== 'audio_ready'}
+{#if hasAudio && !isRecording && status !== 'transcribing' && status !== 'audio_ready' && status !== 'diarizing'}
   <div class="retranscribe-bar">
     <LanguageSelect compact value={retranscribeLang} onchange={(code) => (retranscribeLang = code)} />
     <label class="speakers-label">Speakers
       <input type="number" min="1" max="10" bind:value={retranscribeNumSpeakers} class="speakers-input" />
     </label>
-    <button class="retranscribe-btn" onclick={retranscribe} disabled={transcribing}>
+    <button class="retranscribe-btn" onclick={retranscribe} disabled={transcribing || diarizing}>
       {transcribing ? 'Transcribing…' : 'Retranscribe'}
+    </button>
+    <button class="rediarize-btn" onclick={handleReDiarize} disabled={transcribing || diarizing}>
+      {diarizing ? 'Diarizing…' : 'Re-diarize'}
     </button>
     {#if transcribing && chunkProgress}
       <span class="chunk-progress">Chunk {chunkProgress.chunk} of {chunkProgress.total}</span>
@@ -506,6 +535,28 @@
   }
 
   .retranscribe-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .rediarize-btn {
+    padding: 0.4rem 1rem;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    background: var(--bg-surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  .rediarize-btn:hover:not(:disabled) {
+    background: var(--bg-hover);
+  }
+
+  .rediarize-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
