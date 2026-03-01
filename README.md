@@ -12,6 +12,10 @@ TaleKeeper captures audio from your game table, transcribes speech on-device usi
   ```
   brew install ffmpeg
   ```
+- **Pango** — required by WeasyPrint for PDF export
+  ```
+  brew install pango
+  ```
 - **Ollama** (optional) — for AI-powered session summaries and image generation. Install the [official macOS app](https://ollama.com/download/mac) (not Homebrew — the brew formula lacks MLX support needed for image generation).
 ## Quick Start
 

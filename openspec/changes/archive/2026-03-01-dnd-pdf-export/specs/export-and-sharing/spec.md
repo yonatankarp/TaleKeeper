@@ -1,10 +1,4 @@
-# Export and Sharing
-
-## Purpose
-
-Provide export and sharing capabilities for session summaries and transcripts, including PDF and text export, clipboard copying, batch export of POV summaries, email content generation, direct email sending via SMTP, and transcript export.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: PDF export of summaries
 The system SHALL export session summaries as PDF documents using WeasyPrint with D&D fantasy theming. The PDF MUST include the session name, date, campaign name, and the summary content rendered with fantasy typography, decorative borders, and a parchment-toned background. The PDF MUST use Cinzel (weight 400/700) and Cinzel Decorative (weight 700) for headings and Crimson Text (regular, semibold, italic) for body text, loaded via Google Fonts. The page background MUST be a warm parchment CSS radial gradient (center `#f4e8d1` to edges `#e8d5b0`). The content area MUST have a decorative double-line border in warm gold (`#8b7335`). Ornamental unicode characters (❧, ◆, ⚜) MUST appear as side decorations along the left and right margins via CSS pseudo-elements. Summary text MUST be rendered as proper HTML `<p>` tags by splitting on double newlines, not using `white-space: pre-wrap`. The first paragraph MUST have a drop cap (first letter enlarged in Cinzel Decorative, floated left). Lines consisting of `---` or `***` in the summary text MUST be rendered as ornamental dividers. If a session has generated images, the most recent image (by `generated_at` descending from `session_images`) MUST be embedded as a full-width hero image at the top of the PDF via base64 data URI. If no images exist for the session, the hero image section MUST be omitted gracefully. Full summary PDFs MUST use a "Session Chronicle" title. POV summary PDFs MUST use "The Journal of [Character Name]" as the title. Both MUST show the session name, campaign name, and date as a subtitle.
@@ -37,64 +31,9 @@ The system SHALL export session summaries as PDF documents using WeasyPrint with
 - **WHEN** the summary content contains lines consisting of `---` or `***`
 - **THEN** those lines are rendered as centered ornamental dividers (e.g., ─── ◆ ───) instead of plain text
 
-### Requirement: Text export of summaries
-The system SHALL export summaries as plain text files. The text MUST include a header with session metadata followed by the summary content.
-
-#### Scenario: Export as text file
-- **WHEN** the DM clicks "Export Text" on a summary
-- **THEN** a `.txt` file is downloaded with session metadata as a header and the summary content as plain text
-
-### Requirement: Copy summary to clipboard
-The system SHALL allow the DM to copy any summary's content to the system clipboard with a single click.
-
-#### Scenario: Copy to clipboard
-- **WHEN** the DM clicks "Copy to Clipboard" on a summary
-- **THEN** the summary text is copied to the clipboard and a confirmation toast is shown
-
 ### Requirement: Batch export of all POV summaries
 The system SHALL allow the DM to export all POV summaries for a session in a single action, producing one PDF per character in a ZIP file. Each PDF in the batch MUST use the same D&D fantasy theming as individual POV exports, including the "The Journal of [Character Name]" title, parchment background, decorative borders, fantasy typography, drop cap, and the session's latest hero image (if available).
 
 #### Scenario: Batch export as PDFs
 - **WHEN** the DM clicks "Export All POV Summaries" for a session with 4 characters
 - **THEN** a single ZIP is downloaded containing 4 PDFs, each with D&D fantasy theming, the character's journal title, and the session's latest hero image (if any), named with the character name (e.g., `thorin-pov.pdf`)
-
-### Requirement: Email summary content generation
-The system SHALL generate email-ready content for each summary, including a subject line and formatted body text. The email dialog MUST be titled "Share via Email" (not "Prepare Email"). The dialog MUST appear as a modal overlay that closes when clicking the backdrop. Readonly fields (subject, body) MUST be visually distinct from editable fields with reduced opacity and different background color.
-
-#### Scenario: Share via email dialog
-- **WHEN** the DM clicks "Share via Email" on a POV summary
-- **THEN** a modal overlay appears with pre-filled subject and body (visually distinct as readonly), a "Copy Subject" and "Copy Body" button, and an optional direct send form
-
-#### Scenario: Close email dialog by clicking backdrop
-- **WHEN** the email dialog is open and the DM clicks outside the dialog
-- **THEN** the dialog closes
-
-#### Scenario: Readonly fields visually distinct
-- **WHEN** the email dialog is open
-- **THEN** the subject and body fields appear with reduced opacity and a darker background to indicate they are readonly templates
-
-### Requirement: Direct email sending
-The system SHALL optionally send emails directly to players if the DM has configured an email service. Email configuration MUST support SMTP settings (host, port, username, password, sender address). The system MUST NOT require email configuration — it is an optional feature.
-
-#### Scenario: Configure email settings
-- **WHEN** the DM enters SMTP settings (host, port, credentials, sender address) in the settings page
-- **THEN** the settings are saved and a test email can be sent to verify the configuration
-
-#### Scenario: Send POV summary via email
-- **WHEN** the DM has email configured and clicks "Send Email" on a POV summary, entering the player's email address
-- **THEN** the system sends an email with the POV summary to the specified address and shows a success confirmation
-
-#### Scenario: Send without email configured
-- **WHEN** the DM clicks "Send Email" but has not configured email settings
-- **THEN** the system prompts the DM to configure email settings in the settings page, or suggests using "Prepare Email" for copy-paste instead
-
-#### Scenario: Email sending fails
-- **WHEN** an email fails to send (SMTP error, invalid address)
-- **THEN** the system displays an error message with the failure reason and the summary content remains available for manual copy-paste
-
-### Requirement: Transcript export
-The system SHALL allow the DM to export the full transcript of a session as a text file, with speaker labels and timestamps.
-
-#### Scenario: Export transcript
-- **WHEN** the DM clicks "Export Transcript" on a completed session
-- **THEN** a text file is downloaded containing the full transcript with timestamps and speaker names (e.g., `[00:12:30] Thorin (Alex): I search the room for hidden doors.`)

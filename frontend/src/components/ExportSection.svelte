@@ -28,11 +28,22 @@
     showToast('Copied to clipboard');
   }
 
-  function downloadFile(url: string) {
+  async function downloadFile(url: string) {
+    const res = await fetch(url);
+    if (!res.ok) {
+      showToast('Download failed');
+      return;
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') ?? '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const filename = match?.[1] ?? url.split('/').pop() ?? 'download';
+    const objUrl = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = '';
+    a.href = objUrl;
+    a.download = filename;
     a.click();
+    URL.revokeObjectURL(objUrl);
   }
 
   async function prepareEmail(summaryId: number) {
@@ -78,6 +89,7 @@
     {#each fullSummaries as s}
       <div class="export-row">
         <button class="btn" onclick={() => downloadFile(`/api/summaries/${s.id}/export/pdf`)}>Export PDF</button>
+        <button class="btn" onclick={() => downloadFile(`/api/summaries/${s.id}/export/pdf?printable=true`)}>Print PDF</button>
         <button class="btn" onclick={() => downloadFile(`/api/summaries/${s.id}/export/text`)}>Export Text</button>
         <button class="btn" onclick={() => copyToClipboard(s.content)}>Copy to Clipboard</button>
         <button class="btn" onclick={() => prepareEmail(s.id)}>Share via Email</button>
@@ -94,6 +106,7 @@
       <div class="export-row">
         <span class="label">{s.character_name ?? 'Unknown'}</span>
         <button class="btn btn-sm" onclick={() => downloadFile(`/api/summaries/${s.id}/export/pdf`)}>PDF</button>
+        <button class="btn btn-sm" onclick={() => downloadFile(`/api/summaries/${s.id}/export/pdf?printable=true`)}>Print</button>
         <button class="btn btn-sm" onclick={() => downloadFile(`/api/summaries/${s.id}/export/text`)}>Text</button>
         <button class="btn btn-sm" onclick={() => copyToClipboard(s.content)}>Copy</button>
         <button class="btn btn-sm" onclick={() => prepareEmail(s.id)}>Email</button>
