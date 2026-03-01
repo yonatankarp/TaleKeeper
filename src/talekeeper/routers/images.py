@@ -1,11 +1,13 @@
 """Image generation and management API endpoints."""
 
-import os
+import json
+import traceback
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pathlib import Path
 from pydantic import BaseModel
+from typing import AsyncGenerator
 
 from talekeeper.db import get_db
 from talekeeper.services import llm_client, image_client
@@ -13,6 +15,14 @@ from talekeeper.services.image_generation import craft_scene_description, genera
 from talekeeper.services.summarization import format_transcript
 
 router = APIRouter(tags=["images"])
+
+
+_SSE_PADDING = ":" + " " * 2048 + "\n"
+
+
+def _sse_event(event: str, data: dict) -> str:
+    """Format a server-sent event with padding to defeat output buffering."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n{_SSE_PADDING}"
 
 
 class GenerateImageRequest(BaseModel):
@@ -24,45 +34,65 @@ class CraftSceneRequest(BaseModel):
 
 
 @router.post("/api/sessions/{session_id}/generate-image")
-async def generate_image(session_id: int, body: GenerateImageRequest) -> dict:
-    """Generate an image for a session. Uses provided prompt or crafts one via LLM."""
-    # Verify session exists
+async def generate_image(session_id: int, body: GenerateImageRequest):
+    """Generate an image for a session via SSE stream.
+
+    Sends phase/done/error events so the frontend can show progress.
+    """
+    # --- Pre-flight checks (raise normal HTTP errors) ---
     async with get_db() as db:
         rows = await db.execute_fetchall("SELECT * FROM sessions WHERE id = ?", (session_id,))
     if not rows:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    prompt = body.prompt
-    scene_description = None
+    needs_crafting = body.prompt is None or body.prompt.strip() == ""
 
-    if not prompt:
-        # Two-step pipeline: craft scene description via text LLM, then generate image
+    if needs_crafting:
         llm_config = await llm_client.resolve_config()
         llm_health = await llm_client.health_check(llm_config["base_url"], llm_config["api_key"], llm_config["model"])
         if llm_health["status"] != "ok":
             raise HTTPException(status_code=503, detail=f"Text LLM unavailable: {llm_health.get('message', 'unknown error')}")
 
-        # Get session content: prefer existing full summary, fall back to transcript
         content = await _get_session_content(session_id)
         if not content:
             raise HTTPException(status_code=400, detail="No transcript or summary available for this session")
+    else:
+        llm_config = None
+        content = None
 
-        scene_description = await craft_scene_description(
-            content,
-            base_url=llm_config["base_url"],
-            api_key=llm_config["api_key"],
-            model=llm_config["model"],
-        )
-        prompt = scene_description
-
-    # Check image provider health
     img_config = await image_client.resolve_config()
     img_health = await image_client.health_check(img_config["base_url"], img_config["api_key"], img_config["model"])
     if img_health["status"] != "ok":
         raise HTTPException(status_code=503, detail=f"Image provider unavailable: {img_health.get('message', 'unknown error')}")
 
-    result = await generate_session_image(session_id, prompt, scene_description)
-    return result
+    # --- SSE generator (slow work happens here) ---
+    async def _stream() -> AsyncGenerator[str, None]:
+        try:
+            prompt = body.prompt.strip() if body.prompt else ""
+            scene_description = None
+
+            if needs_crafting:
+                yield _sse_event("phase", {"phase": "crafting_scene"})
+                scene_description = await craft_scene_description(
+                    content,
+                    base_url=llm_config["base_url"],
+                    api_key=llm_config["api_key"],
+                    model=llm_config["model"],
+                )
+                prompt = scene_description
+
+            yield _sse_event("phase", {"phase": "generating_image"})
+            result = await generate_session_image(session_id, prompt, scene_description)
+            yield _sse_event("done", {"image": result})
+        except Exception as exc:
+            traceback.print_exc()
+            yield _sse_event("error", {"message": str(exc)})
+
+    return StreamingResponse(
+        _stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/api/sessions/{session_id}/craft-scene")

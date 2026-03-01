@@ -78,30 +78,23 @@ Data is persisted via bind-mounts (`./data/db` and `./data/audio`) and a named v
 
 ## Image Generation
 
-TaleKeeper can generate scene illustrations from your session content using a local AI image generation model. It uses Ollama's OpenAI-compatible `/v1/images/generations` endpoint — the same Ollama instance used for text summaries.
+TaleKeeper can generate scene illustrations from your session content using any OpenAI-compatible image generation API. No image service is bundled — you bring your own provider.
 
-### Setup
+### Supported providers
 
-Install Ollama from the [official macOS app](https://ollama.com/download/mac), then pull an image generation model:
+Any API that implements the OpenAI `/v1/images/generations` endpoint works, including:
+- **Ollama** (local, with models like `x/flux2-klein:9b`)
+- **OpenAI** (DALL-E)
+- **Self-hosted** (ComfyUI, Stable Diffusion WebUI with `--api` flag, etc.)
 
-```bash
-ollama pull x/flux2-klein:9b
-```
+### Configuration
 
-The Docker Compose stack pulls this model automatically on first start.
-
-**Important:** Do not use `brew install ollama` — the Homebrew formula does not include MLX support, which is required for image generation on Apple Silicon.
-
-**Note:** Ollama image generation currently requires macOS with Apple Silicon. Windows and Linux support is coming soon.
-
-### Custom provider
-
-You can use any OpenAI-compatible image generation API. Configure the provider in the Settings page:
-- **Base URL** — e.g., `http://localhost:7860/v1`
+Configure the image provider in the **Settings** page:
+- **Base URL** — e.g., `http://localhost:11434/v1` for Ollama or `https://api.openai.com/v1` for OpenAI
 - **API Key** — if required by your provider
 - **Model** — the model name your provider expects
 
-Environment variables `IMAGE_BASE_URL`, `IMAGE_API_KEY`, and `IMAGE_MODEL` also work.
+Environment variables `IMAGE_API_KEY` and `IMAGE_MODEL` can also be used.
 
 ## Development
 

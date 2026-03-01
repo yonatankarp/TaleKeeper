@@ -1,24 +1,15 @@
 <script lang="ts">
-  import { api } from '../lib/api';
+  import { api, generateImageStream, type ImageMeta } from '../lib/api';
   import ConfirmDialog from './ConfirmDialog.svelte';
   import Spinner from './Spinner.svelte';
 
   type Props = { sessionId: number };
   let { sessionId }: Props = $props();
 
-  type ImageMeta = {
-    id: number;
-    session_id: number;
-    file_path: string;
-    prompt: string;
-    scene_description: string | null;
-    model_used: string;
-    generated_at: string;
-  };
-
   let images = $state<ImageMeta[]>([]);
-  let loading = $state(false);
+  let generating = $state(false);
   let craftingScene = $state(false);
+  let genPhase = $state<string | null>(null);
   let error = $state<string | null>(null);
   let imageProviderOk = $state<boolean | null>(null);
   let imageProviderMsg = $state('');
@@ -26,6 +17,12 @@
   let confirmDeleteId = $state<number | null>(null);
   let genElapsed = $state(0);
   let genTimer: ReturnType<typeof setInterval> | null = null;
+  let cancelStream: (() => void) | null = null;
+
+  const phaseLabels: Record<string, string> = {
+    crafting_scene: 'Crafting scene...',
+    generating_image: 'Generating image...',
+  };
 
   function startGenTimer() {
     genElapsed = 0;
@@ -64,21 +61,34 @@
     }
   }
 
-  async function generateImage() {
-    if (!promptText.trim()) return;
-    loading = true;
+  function generateImage() {
+    const prompt = promptText.trim() || null;
+    generating = true;
+    genPhase = null;
     error = null;
     startGenTimer();
-    try {
-      await api.post(`/sessions/${sessionId}/generate-image`, { prompt: promptText.trim() });
-      promptText = '';
-      await load();
-    } catch (e: any) {
-      error = e.message;
-    } finally {
-      loading = false;
-      stopGenTimer();
-    }
+
+    const handle = generateImageStream(
+      sessionId,
+      prompt,
+      (phase) => { genPhase = phase; },
+      (_image) => {
+        generating = false;
+        genPhase = null;
+        stopGenTimer();
+        cancelStream = null;
+        promptText = '';
+        load();
+      },
+      (message) => {
+        generating = false;
+        genPhase = null;
+        stopGenTimer();
+        cancelStream = null;
+        error = message;
+      },
+    );
+    cancelStream = handle.cancel;
   }
 
   async function deleteImage(id: number) {
@@ -104,7 +114,7 @@
 
   <div class="prompt-area">
     <div class="actions">
-      <button class="btn btn-primary" onclick={craftScene} disabled={craftingScene || loading}>
+      <button class="btn btn-primary" onclick={craftScene} disabled={craftingScene || generating}>
         {#if craftingScene}
           <Spinner size="14px" /> Crafting scene...
         {:else}
@@ -117,13 +127,13 @@
       class="prompt-input"
       bind:value={promptText}
       placeholder="Scene description will appear here after clicking Generate Scene, or type your own prompt directly..."
-      disabled={loading}
+      disabled={generating}
       rows="4"
     ></textarea>
 
-    <button class="btn btn-primary" onclick={generateImage} disabled={loading || !promptText.trim() || imageProviderOk === false}>
-      {#if loading}
-        <Spinner size="14px" /> Generating image... ({genElapsed}s)
+    <button class="btn btn-primary" onclick={generateImage} disabled={generating || imageProviderOk === false}>
+      {#if generating}
+        <Spinner size="14px" /> {phaseLabels[genPhase ?? ''] ?? 'Starting...'} ({genElapsed}s)
       {:else}
         Generate Image
       {/if}
@@ -156,7 +166,7 @@
     </div>
   {/if}
 
-  {#if images.length === 0 && !loading}
+  {#if images.length === 0 && !generating}
     <p class="empty">No illustrations generated yet. Generate a scene after your session is transcribed or summarized.</p>
   {/if}
 </div>
