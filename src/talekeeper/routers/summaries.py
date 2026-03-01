@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from talekeeper.db import get_db
-from talekeeper.services import ollama
+from talekeeper.services import llm_client
 from talekeeper.services.summarization import (
     format_transcript,
     generate_full_summary,
@@ -16,7 +16,6 @@ router = APIRouter(tags=["summaries"])
 
 class GenerateSummaryRequest(BaseModel):
     type: str = "full"  # "full" or "pov"
-    model: str = "llama3.1:8b"
 
 
 class SummaryUpdate(BaseModel):
@@ -39,17 +38,14 @@ async def list_summaries(session_id: int) -> list[dict]:
 
 @router.post("/api/sessions/{session_id}/generate-summary")
 async def generate_summary(session_id: int, body: GenerateSummaryRequest) -> dict:
-    # Check Ollama connectivity
-    health = await ollama.health_check()
+    # Resolve LLM config
+    config = await llm_client.resolve_config()
+    base_url, api_key, model = config["base_url"], config["api_key"], config["model"]
+
+    # Check LLM connectivity
+    health = await llm_client.health_check(base_url, api_key, model)
     if health["status"] != "ok":
         raise HTTPException(status_code=503, detail=health["message"])
-
-    available = await ollama.check_model_available(body.model)
-    if not available:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Model '{body.model}' not available. Pull it with: ollama pull {body.model}",
-        )
 
     # Get transcript
     async with get_db() as db:
@@ -69,12 +65,12 @@ async def generate_summary(session_id: int, body: GenerateSummaryRequest) -> dic
     transcript_text = format_transcript([dict(s) for s in segments])
 
     if body.type == "full":
-        content = await generate_full_summary(transcript_text, model=body.model)
+        content = await generate_full_summary(transcript_text, base_url=base_url, api_key=api_key, model=model)
 
         async with get_db() as db:
             cursor = await db.execute(
                 "INSERT INTO summaries (session_id, type, content, model_used) VALUES (?, 'full', ?, ?)",
-                (session_id, content, body.model),
+                (session_id, content, model),
             )
             rows = await db.execute_fetchall(
                 "SELECT * FROM summaries WHERE id = ?", (cursor.lastrowid,)
@@ -102,13 +98,15 @@ async def generate_summary(session_id: int, body: GenerateSummaryRequest) -> dic
                 transcript_text,
                 character_name=sp["character_name"],
                 player_name=sp["player_name"] or "Unknown",
-                model=body.model,
+                base_url=base_url,
+                api_key=api_key,
+                model=model,
             )
 
             async with get_db() as db:
                 cursor = await db.execute(
                     "INSERT INTO summaries (session_id, type, speaker_id, content, model_used) VALUES (?, 'pov', ?, ?, ?)",
-                    (session_id, sp["id"], content, body.model),
+                    (session_id, sp["id"], content, model),
                 )
                 rows = await db.execute_fetchall(
                     "SELECT * FROM summaries WHERE id = ?", (cursor.lastrowid,)
@@ -175,6 +173,7 @@ async def regenerate_summary(session_id: int, body: GenerateSummaryRequest) -> d
     return await generate_summary(session_id, body)
 
 
-@router.get("/api/ollama/status")
-async def ollama_status() -> dict:
-    return await ollama.health_check()
+@router.get("/api/llm/status")
+async def llm_status() -> dict:
+    config = await llm_client.resolve_config()
+    return await llm_client.health_check(config["base_url"], config["api_key"], config["model"])

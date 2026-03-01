@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from talekeeper.services import ollama
+from talekeeper.services import llm_client
 
 
 async def check_first_run() -> dict:
@@ -12,14 +12,13 @@ async def check_first_run() -> dict:
         "has_recordings": any(Path("data/audio").rglob("*.webm")) if Path("data/audio").exists() else False,
     }
 
-    # Check Ollama
+    # Check LLM provider
     try:
-        health = await ollama.health_check()
-        checks["ollama_running"] = health["status"] == "ok"
-        checks["ollama_models"] = [m["name"] for m in health.get("models", [])] if health["status"] == "ok" else []
+        config = await llm_client.resolve_config()
+        health = await llm_client.health_check(config["base_url"], config["api_key"], config["model"])
+        checks["llm_connected"] = health["status"] == "ok"
     except Exception:
-        checks["ollama_running"] = False
-        checks["ollama_models"] = []
+        checks["llm_connected"] = False
 
     checks["is_first_run"] = not checks["data_dir_exists"] or not checks["has_recordings"]
 

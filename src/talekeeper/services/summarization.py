@@ -1,6 +1,6 @@
-"""Summary generation service using Ollama."""
+"""Summary generation service using OpenAI-compatible LLM provider."""
 
-from talekeeper.services import ollama
+from talekeeper.services import llm_client
 
 FULL_SUMMARY_SYSTEM = """You are a summarizer for tabletop RPG session transcripts.
 Your job is to summarize ONLY what is actually said in the transcript.
@@ -90,32 +90,39 @@ def _format_time(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
-async def generate_full_summary(transcript_text: str, model: str = "llama3.1:8b") -> str:
+async def generate_full_summary(
+    transcript_text: str,
+    base_url: str,
+    api_key: str | None,
+    model: str,
+) -> str:
     """Generate a full session narrative summary."""
     chunks = _chunk_transcript(transcript_text)
 
     if len(chunks) == 1:
         prompt = FULL_SUMMARY_PROMPT.format(transcript=transcript_text)
-        return await ollama.generate(model, prompt, system=FULL_SUMMARY_SYSTEM)
+        return await llm_client.generate(base_url, api_key, model, prompt, system=FULL_SUMMARY_SYSTEM)
 
     # Chunked summarization
     chunk_summaries = []
     for i, chunk in enumerate(chunks):
         prompt = f"Summarize this section ({i + 1}/{len(chunks)}) of a session transcript. Only include what is actually said:\n\n{chunk}"
-        summary = await ollama.generate(model, prompt, system=FULL_SUMMARY_SYSTEM)
+        summary = await llm_client.generate(base_url, api_key, model, prompt, system=FULL_SUMMARY_SYSTEM)
         chunk_summaries.append(summary)
 
     # Meta-summary
     combined = "\n\n---\n\n".join(chunk_summaries)
     meta_prompt = f"Combine these section summaries into one coherent session recap:\n\n{combined}"
-    return await ollama.generate(model, meta_prompt, system=FULL_SUMMARY_SYSTEM)
+    return await llm_client.generate(base_url, api_key, model, meta_prompt, system=FULL_SUMMARY_SYSTEM)
 
 
 async def generate_pov_summary(
     transcript_text: str,
     character_name: str,
     player_name: str,
-    model: str = "llama3.1:8b",
+    base_url: str,
+    api_key: str | None,
+    model: str,
 ) -> str:
     """Generate a POV summary from a specific character's perspective."""
     chunks = _chunk_transcript(transcript_text)
@@ -126,7 +133,7 @@ async def generate_pov_summary(
             character_name=character_name,
             player_name=player_name,
         )
-        return await ollama.generate(model, prompt, system=POV_SUMMARY_SYSTEM)
+        return await llm_client.generate(base_url, api_key, model, prompt, system=POV_SUMMARY_SYSTEM)
 
     # Chunked POV summarization
     chunk_summaries = []
@@ -134,7 +141,7 @@ async def generate_pov_summary(
         prompt = (
             f"Summarize this section ({i + 1}/{len(chunks)}) from {character_name}'s perspective:\n\n{chunk}"
         )
-        summary = await ollama.generate(model, prompt, system=POV_SUMMARY_SYSTEM)
+        summary = await llm_client.generate(base_url, api_key, model, prompt, system=POV_SUMMARY_SYSTEM)
         chunk_summaries.append(summary)
 
     combined = "\n\n---\n\n".join(chunk_summaries)
@@ -142,4 +149,4 @@ async def generate_pov_summary(
         f"Combine these section recaps into one coherent first-person session "
         f"journal entry for {character_name}:\n\n{combined}"
     )
-    return await ollama.generate(model, meta_prompt, system=POV_SUMMARY_SYSTEM)
+    return await llm_client.generate(base_url, api_key, model, meta_prompt, system=POV_SUMMARY_SYSTEM)

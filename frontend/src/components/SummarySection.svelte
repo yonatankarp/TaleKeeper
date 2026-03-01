@@ -21,8 +21,8 @@
   let error = $state<string | null>(null);
   let editingId = $state<number | null>(null);
   let editContent = $state('');
-  let ollamaOk = $state<boolean | null>(null);
-  let ollamaMsg = $state('');
+  let llmOk = $state<boolean | null>(null);
+  let llmMsg = $state('');
   let confirmRegenType = $state<string | null>(null);
   let confirmDeleteId = $state<number | null>(null);
   let genElapsed = $state(0);
@@ -41,14 +41,14 @@
     summaries = await api.get<Summary[]>(`/sessions/${sessionId}/summaries`);
   }
 
-  async function checkOllama() {
+  async function checkLlm() {
     try {
-      const status = await api.get<{ status: string; message?: string }>('/ollama/status');
-      ollamaOk = status.status === 'ok';
-      ollamaMsg = status.message ?? '';
+      const status = await api.get<{ status: string; message?: string }>('/llm/status');
+      llmOk = status.status === 'ok';
+      llmMsg = status.message ?? '';
     } catch {
-      ollamaOk = false;
-      ollamaMsg = 'Cannot reach Ollama';
+      llmOk = false;
+      llmMsg = 'Cannot reach LLM provider';
     }
   }
 
@@ -116,7 +116,7 @@
     await load();
   }
 
-  $effect(() => { load(); checkOllama(); });
+  $effect(() => { load(); checkLlm(); });
 
   let fullSummaries = $derived(summaries.filter(s => s.type === 'full'));
   let povSummaries = $derived(summaries.filter(s => s.type === 'pov'));
@@ -127,23 +127,22 @@
     <div class="error">{error}</div>
   {/if}
 
-  {#if ollamaOk === false}
+  {#if llmOk === false}
     <div class="warning">
-      <strong>Ollama not available</strong>
-      <p>{ollamaMsg || 'Install Ollama and run: ollama serve'}</p>
-      <p>Then pull a model: <code>ollama pull llama3.1:8b</code></p>
+      <strong>LLM provider not available</strong>
+      <p>{llmMsg || 'No LLM provider is reachable. Check the base URL and API key in Settings.'}</p>
     </div>
   {/if}
 
   <div class="actions">
-    <button class="btn btn-primary" onclick={generateFull} disabled={loading || ollamaOk === false}>
+    <button class="btn btn-primary" onclick={generateFull} disabled={loading || llmOk === false}>
       {#if loading}
         <Spinner size="14px" /> Generating... ({genElapsed}s)
       {:else}
         Generate Summary
       {/if}
     </button>
-    <button class="btn btn-primary" onclick={generatePov} disabled={loading || ollamaOk === false}>
+    <button class="btn btn-primary" onclick={generatePov} disabled={loading || llmOk === false}>
       {#if loading}
         <Spinner size="14px" /> Generating... ({genElapsed}s)
       {:else}
@@ -260,13 +259,6 @@
     font-size: 0.9rem;
   }
 
-  .warning code {
-    background: var(--bg-input);
-    padding: 0.15rem 0.4rem;
-    border-radius: 3px;
-  }
-
-  .warning p { margin: 0.25rem 0; }
 
   .actions {
     display: flex;

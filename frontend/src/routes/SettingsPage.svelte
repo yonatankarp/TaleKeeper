@@ -5,15 +5,17 @@
   let settings = $state<Record<string, string>>({});
   let pageLoading = $state(true);
   let toast = $state<string | null>(null);
-  let testingOllama = $state(false);
-  let ollamaResult = $state<string | null>(null);
+  let testingLlm = $state(false);
+  let llmResult = $state<string | null>(null);
 
   const whisperModels = ['tiny', 'base', 'small', 'medium', 'large-v3'];
 
   async function load() {
     settings = await api.get<Record<string, string>>('/settings');
     if (!settings.whisper_model) settings.whisper_model = 'medium';
-    if (!settings.ollama_model) settings.ollama_model = 'llama3.1:8b';
+    if (!settings.llm_base_url) settings.llm_base_url = '';
+    if (!settings.llm_api_key) settings.llm_api_key = '';
+    if (!settings.llm_model) settings.llm_model = '';
     if (!settings.live_transcription) settings.live_transcription = 'false';
     pageLoading = false;
   }
@@ -23,17 +25,17 @@
     showToast('Settings saved');
   }
 
-  async function testOllama() {
-    testingOllama = true;
+  async function testLlm() {
+    testingLlm = true;
     try {
-      const status = await api.get<{ status: string; message?: string }>('/ollama/status');
-      ollamaResult = status.status === 'ok'
-        ? 'Connected! Ollama is running.'
+      const status = await api.get<{ status: string; message?: string }>('/llm/status');
+      llmResult = status.status === 'ok'
+        ? 'Connected! LLM provider is reachable.'
         : `Error: ${status.message}`;
     } catch {
-      ollamaResult = 'Cannot reach Ollama. Is it running?';
+      llmResult = 'Cannot reach LLM provider. Check your settings.';
     } finally {
-      testingOllama = false;
+      testingLlm = false;
     }
   }
 
@@ -73,17 +75,26 @@
   </div>
 
   <div class="section">
-    <h3>Summary Generation (Ollama)</h3>
+    <h3>LLM Provider</h3>
+    <p class="hint" style="margin-bottom: 0.75rem;">Configure any OpenAI-compatible provider. Leave fields empty to use defaults (Ollama at localhost:11434, model llama3.1:8b).</p>
     <label>
-      Model Name
-      <input type="text" bind:value={settings.ollama_model} placeholder="llama3.1:8b" />
+      Base URL
+      <input type="text" bind:value={settings.llm_base_url} placeholder="http://localhost:11434/v1" />
+    </label>
+    <label>
+      API Key
+      <input type="password" bind:value={settings.llm_api_key} placeholder="Not required for local providers" />
+    </label>
+    <label>
+      Model
+      <input type="text" bind:value={settings.llm_model} placeholder="llama3.1:8b" />
     </label>
     <div class="action-row">
-      <button class="btn" onclick={testOllama} disabled={testingOllama}>
-        {testingOllama ? 'Testing...' : 'Test Connection'}
+      <button class="btn" onclick={testLlm} disabled={testingLlm}>
+        {testingLlm ? 'Testing...' : 'Test Connection'}
       </button>
-      {#if ollamaResult}
-        <span class="test-result">{ollamaResult}</span>
+      {#if llmResult}
+        <span class="test-result">{llmResult}</span>
       {/if}
     </div>
   </div>

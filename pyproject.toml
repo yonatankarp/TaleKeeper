@@ -21,6 +21,7 @@ dependencies = [
     "audioop-lts>=0.2.2; python_version>='3.13'",
     "httpx>=0.28",
     "python-multipart>=0.0.18",
+    "openai>=1.0",
 ]
 
 [project.scripts]
