@@ -11,7 +11,9 @@ Use third person, past tense. Be specific about names and events mentioned in th
 Output ONLY the summary text itself. Do NOT include any preamble, introduction, or meta-commentary
 such as "Here is the summary" or "Based on the transcript". Just write the narrative directly.
 Write the story from an in-world perspective. Do not reference the game mechanics, the DM,
-dice rolls, or out-of-character table talk. Treat everything as events that happened in the world."""
+dice rolls, or out-of-character table talk. Treat everything as events that happened in the world.
+IMPORTANT: Write the summary in the same language as the transcript. If the transcript is in
+Hebrew, write in Hebrew. If in English, write in English. Match the language of the source material."""
 
 FULL_SUMMARY_PROMPT = """Summarize the following session transcript into a narrative recap.
 IMPORTANT: Only include information that is actually present in the transcript below.
@@ -33,7 +35,9 @@ Do NOT invent or fabricate any content.
 Output ONLY the journal entry itself. Do NOT include any preamble, introduction, or meta-commentary
 such as "Here is the recap" or "Based on the transcript". Just write the entry directly.
 Write from an in-world perspective. Do not reference the game mechanics, the DM, dice rolls,
-or out-of-character table talk. Treat everything as events that actually happened to the character."""
+or out-of-character table talk. Treat everything as events that actually happened to the character.
+IMPORTANT: Write the journal entry in the same language as the transcript. If the transcript is in
+Hebrew, write in Hebrew. If in English, write in English. Match the language of the source material."""
 
 POV_SUMMARY_PROMPT = """Write a session recap from the perspective of {character_name}.
 Focus on their personal experience of the session.
