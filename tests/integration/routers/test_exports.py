@@ -143,8 +143,8 @@ async def test_export_pdf_printable(mock_html_cls, client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 @patch("weasyprint.HTML")
-async def test_export_pov_all_zip(mock_html_cls, client: AsyncClient) -> None:
-    """GET /api/sessions/{id}/export/pov-all returns a ZIP with POV PDFs."""
+async def test_export_summaries_all_zip(mock_html_cls, client: AsyncClient) -> None:
+    """GET /api/sessions/{id}/export/summaries-all returns a ZIP with all summary PDFs."""
     mock_html_cls.return_value.write_pdf.return_value = b"%PDF-pov"
 
     async with get_db() as db:
@@ -158,27 +158,32 @@ async def test_export_pov_all_zip(mock_html_cls, client: AsyncClient) -> None:
         await db.commit()
 
     resp = await client.get(
-        f"/api/sessions/{ids['session_id']}/export/pov-all"
+        f"/api/sessions/{ids['session_id']}/export/summaries-all"
     )
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "application/zip"
-    # Verify the ZIP contains at least one file
+    # Verify the ZIP contains both full and POV summaries
     import zipfile, io
     zf = zipfile.ZipFile(io.BytesIO(resp.content))
     names = zf.namelist()
-    assert len(names) >= 1
+    assert len(names) == 2
+    assert "session-chronicle.pdf" in names
     assert any(name.endswith("-pov.pdf") for name in names)
 
 
 @pytest.mark.asyncio
-async def test_export_pov_all_no_summaries(client: AsyncClient) -> None:
-    """GET /api/sessions/{id}/export/pov-all returns 404 when no POV summaries exist."""
+async def test_export_summaries_all_no_summaries(client: AsyncClient) -> None:
+    """GET /api/sessions/{id}/export/summaries-all returns 404 when no summaries exist."""
     async with get_db() as db:
-        # _seed creates a 'full' summary, not 'pov'
-        ids = await _seed(db)
+        # Create a session with no summaries at all
+        cid = (await db.execute("INSERT INTO campaigns (name) VALUES ('Empty')")).lastrowid
+        sid = (await db.execute(
+            "INSERT INTO sessions (campaign_id, name, date) VALUES (?, 'S', '2025-01-01')", (cid,)
+        )).lastrowid
+        await db.commit()
 
     resp = await client.get(
-        f"/api/sessions/{ids['session_id']}/export/pov-all"
+        f"/api/sessions/{sid}/export/summaries-all"
     )
     assert resp.status_code == 404
 
