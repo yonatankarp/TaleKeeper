@@ -90,3 +90,4 @@ D&D session recording, transcription, and summarization app. FastAPI backend + S
 - Frontend build output goes to `src/talekeeper/static/` (gitignored, do not commit)
 - **Always use OpenSpec** for planning and tracking changes — never use `docs/plans/` directly
 - **Archiving an OpenSpec change must commit and push** — after archiving, automatically commit all changes and push to remote
+- **Always use a git worktree when developing a new spec** — work in an isolated worktree so multiple agents can work on different specs in parallel without conflicts
