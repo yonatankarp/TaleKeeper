@@ -28,6 +28,7 @@ async def _apply_schema(db: aiosqlite.Connection) -> None:
     await _migrate_add_num_speakers_column(db)
     await _migrate_add_voice_signatures_table(db)
     await _migrate_add_session_images_table(db)
+    await _migrate_add_roster_description(db)
 
 
 async def _migrate_add_session_images_table(db: aiosqlite.Connection) -> None:
@@ -87,6 +88,24 @@ async def _migrate_add_voice_signatures_table(db: aiosqlite.Connection) -> None:
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
+
+
+async def _migrate_add_roster_description(db: aiosqlite.Connection) -> None:
+    """Add description, sheet_url, and sheet_data columns to roster_entries if missing."""
+    cols = await db.execute_fetchall("PRAGMA table_info(roster_entries)")
+    col_names = [c["name"] for c in cols]
+    if "description" not in col_names:
+        await db.execute(
+            "ALTER TABLE roster_entries ADD COLUMN description TEXT DEFAULT ''"
+        )
+    if "sheet_url" not in col_names:
+        await db.execute(
+            "ALTER TABLE roster_entries ADD COLUMN sheet_url TEXT DEFAULT ''"
+        )
+    if "sheet_data" not in col_names:
+        await db.execute(
+            "ALTER TABLE roster_entries ADD COLUMN sheet_data TEXT DEFAULT ''"
+        )
 
 
 @asynccontextmanager
@@ -156,6 +175,9 @@ CREATE TABLE IF NOT EXISTS roster_entries (
     campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
     player_name TEXT NOT NULL,
     character_name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    sheet_url TEXT DEFAULT '',
+    sheet_data TEXT DEFAULT '',
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

@@ -78,6 +78,7 @@ async def generate_image(session_id: int, body: GenerateImageRequest):
                     base_url=llm_config["base_url"],
                     api_key=llm_config["api_key"],
                     model=llm_config["model"],
+                    session_id=session_id,
                 )
                 prompt = scene_description
 
@@ -117,6 +118,7 @@ async def craft_scene(session_id: int) -> dict:
         base_url=llm_config["base_url"],
         api_key=llm_config["api_key"],
         model=llm_config["model"],
+        session_id=session_id,
     )
     return {"scene_description": scene_description}
 

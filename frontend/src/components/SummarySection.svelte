@@ -343,7 +343,8 @@
   .btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
-  .btn-danger { color: var(--danger); }
+  .btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .btn-danger:hover:not(:disabled) { opacity: 0.85; }
   .btn-sm { padding: 0.25rem 0.75rem; font-size: 0.8rem; }
   .btn-group { display: flex; gap: 0.5rem; }
 

@@ -29,11 +29,32 @@ Guidelines:
 SCENE_DESCRIPTION_PROMPT = """Based on the following session content, write a vivid scene description
 suitable for AI image generation. Pick the single most dramatic or memorable moment and describe
 it visually.
-
+{character_block}
 SESSION CONTENT:
 {content}
 
 Write a concise, vivid scene description (2-4 sentences):"""
+
+
+async def _get_character_descriptions(session_id: int) -> str:
+    """Get character visual descriptions from the campaign roster for this session."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            """SELECT r.character_name, r.description
+               FROM roster_entries r
+               JOIN campaigns c ON c.id = r.campaign_id
+               JOIN sessions s ON s.campaign_id = c.id
+               WHERE s.id = ? AND r.is_active = 1 AND r.description != ''""",
+            (session_id,),
+        )
+    if not rows:
+        return ""
+    lines = [f"- {r['character_name']}: {r['description']}" for r in rows]
+    return (
+        "\nCHARACTER APPEARANCES (use these descriptions when depicting characters):\n"
+        + "\n".join(lines)
+        + "\n"
+    )
 
 
 async def craft_scene_description(
@@ -41,9 +62,13 @@ async def craft_scene_description(
     base_url: str,
     api_key: str | None,
     model: str,
+    session_id: int | None = None,
 ) -> str:
     """Use the text LLM to craft an image generation prompt from session content."""
-    prompt = SCENE_DESCRIPTION_PROMPT.format(content=content)
+    character_block = ""
+    if session_id is not None:
+        character_block = await _get_character_descriptions(session_id)
+    prompt = SCENE_DESCRIPTION_PROMPT.format(content=content, character_block=character_block)
     return await llm_client.generate(base_url, api_key, model, prompt, system=SCENE_DESCRIPTION_SYSTEM)
 
 
