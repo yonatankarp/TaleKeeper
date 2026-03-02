@@ -1,9 +1,12 @@
 """Tests for speaker management API endpoints."""
 
+from pathlib import Path
+from unittest.mock import patch, AsyncMock, MagicMock
+
 import pytest
 from httpx import AsyncClient
-from unittest.mock import patch, AsyncMock
 
+from conftest import parse_sse_events
 from talekeeper.db import get_db
 
 
@@ -149,3 +152,169 @@ async def test_speaker_suggestions(client: AsyncClient) -> None:
     assert len(data) >= 1
     names = [r["player_name"] for r in data]
     assert "Alice" in names
+
+
+# ---------------------------------------------------------------------------
+# Re-diarize SSE helpers
+# ---------------------------------------------------------------------------
+
+async def _seed_completed_session_with_audio(db, tmp_path: Path) -> dict:
+    """Create campaign -> session (completed, with audio) -> speaker -> segment."""
+    cursor = await db.execute(
+        "INSERT INTO campaigns (name) VALUES ('Test Campaign')"
+    )
+    campaign_id = cursor.lastrowid
+
+    audio_file = tmp_path / "session.webm"
+    audio_file.write_bytes(b"fake-audio")
+
+    cursor = await db.execute(
+        "INSERT INTO sessions (campaign_id, name, date, audio_path, status) "
+        "VALUES (?, 'Session 1', '2025-01-01', ?, 'completed')",
+        (campaign_id, str(audio_file)),
+    )
+    session_id = cursor.lastrowid
+
+    cursor = await db.execute(
+        "INSERT INTO speakers (session_id, diarization_label, player_name) "
+        "VALUES (?, 'SPEAKER_00', 'Alice')",
+        (session_id,),
+    )
+    speaker_id = cursor.lastrowid
+
+    await db.execute(
+        "INSERT INTO transcript_segments (session_id, speaker_id, text, start_time, end_time) "
+        "VALUES (?, ?, 'Hello world', 0.0, 1.0)",
+        (session_id, speaker_id),
+    )
+    await db.execute(
+        "INSERT INTO transcript_segments (session_id, speaker_id, text, start_time, end_time) "
+        "VALUES (?, ?, 'Roll for initiative', 1.0, 2.0)",
+        (session_id, speaker_id),
+    )
+
+    await db.commit()
+    return {
+        "campaign_id": campaign_id,
+        "session_id": session_id,
+        "audio_file": audio_file,
+        "speaker_id": speaker_id,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Re-diarize SSE tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+@patch(
+    "talekeeper.services.diarization.run_final_diarization",
+    new_callable=AsyncMock,
+)
+@patch("talekeeper.services.audio.audio_to_wav")
+async def test_re_diarize_happy_path(
+    mock_audio_to_wav: MagicMock,
+    mock_diarize: AsyncMock,
+    client: AsyncClient,
+    tmp_path: Path,
+) -> None:
+    """POST /api/sessions/{id}/re-diarize streams phase and done events."""
+    async with get_db() as db:
+        ids = await _seed_completed_session_with_audio(db, tmp_path)
+
+    session_id = ids["session_id"]
+
+    # Set up mocks
+    wav_file = tmp_path / "session.wav"
+    wav_file.write_bytes(b"fake-wav")
+    mock_audio_to_wav.return_value = wav_file
+
+    resp = await client.post(
+        f"/api/sessions/{session_id}/re-diarize",
+        json={"num_speakers": 3},
+    )
+    assert resp.status_code == 200
+
+    events = parse_sse_events(resp.text)
+
+    # Expect: phase, done
+    event_types = [e["event"] for e in events]
+    assert "phase" in event_types
+    assert "done" in event_types
+
+    phase_events = [e for e in events if e["event"] == "phase"]
+    assert phase_events[0]["data"]["phase"] == "diarization"
+
+    done_events = [e for e in events if e["event"] == "done"]
+    assert "segments_count" in done_events[0]["data"]
+
+    # Verify mocks were called
+    mock_audio_to_wav.assert_called_once()
+    mock_diarize.assert_called_once()
+    # Verify num_speakers_override was passed
+    call_kwargs = mock_diarize.call_args
+    assert call_kwargs[1]["num_speakers_override"] == 3
+
+    # Verify session status is back to 'completed'
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT status FROM sessions WHERE id = ?", (session_id,)
+        )
+        assert rows[0]["status"] == "completed"
+
+    # Verify old speakers were cleaned up (run_final_diarization is mocked so no new ones created)
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM speakers WHERE session_id = ?", (session_id,)
+        )
+        assert len(rows) == 0
+
+
+@pytest.mark.asyncio
+async def test_re_diarize_session_not_completed(client: AsyncClient) -> None:
+    """POST /api/sessions/{id}/re-diarize returns 409 when session status is draft."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "INSERT INTO campaigns (name) VALUES ('C')"
+        )
+        campaign_id = cursor.lastrowid
+
+        cursor = await db.execute(
+            "INSERT INTO sessions (campaign_id, name, date, audio_path, status) "
+            "VALUES (?, 'S', '2025-01-01', '/tmp/fake.webm', 'draft')",
+            (campaign_id,),
+        )
+        session_id = cursor.lastrowid
+        await db.commit()
+
+    resp = await client.post(
+        f"/api/sessions/{session_id}/re-diarize",
+        json={"num_speakers": 3},
+    )
+    assert resp.status_code == 409
+    assert "currently being processed" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_re_diarize_no_audio(client: AsyncClient) -> None:
+    """POST /api/sessions/{id}/re-diarize returns 400 when no audio recorded."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "INSERT INTO campaigns (name) VALUES ('C')"
+        )
+        campaign_id = cursor.lastrowid
+
+        cursor = await db.execute(
+            "INSERT INTO sessions (campaign_id, name, date, status) "
+            "VALUES (?, 'S', '2025-01-01', 'completed')",
+            (campaign_id,),
+        )
+        session_id = cursor.lastrowid
+        await db.commit()
+
+    resp = await client.post(
+        f"/api/sessions/{session_id}/re-diarize",
+        json={"num_speakers": 3},
+    )
+    assert resp.status_code == 400
+    assert "No audio" in resp.json()["detail"]
