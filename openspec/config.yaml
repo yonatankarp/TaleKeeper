@@ -1,20 +1,78 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  ## Domain
+  TaleKeeper is a self-hosted, local-first D&D/TTRPG session recording, transcription, and summarization app.
+  It records tabletop RPG sessions, transcribes audio with speaker diarization, generates AI summaries,
+  and exports session logs as styled PDFs. It runs entirely on the user's machine — no cloud services.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  ## Tech Stack
+  - **Backend**: Python 3.14, FastAPI, aiosqlite (SQLite WAL mode), Pydantic
+  - **Frontend**: Svelte 5 (runes: $state, $derived, $effect — NOT legacy $: syntax), TypeScript strict
+  - **ML/AI**: Whisper (transcription), pyannote (diarization), Ollama or OpenAI-compatible LLMs (summaries, naming, image gen)
+  - **System deps**: ffmpeg, Pango, Cairo (for PDF export)
+  - **Testing**: pytest + asyncio (backend), Vitest + @testing-library/svelte (frontend)
+  - **Database**: SQLite via aiosqlite, async context manager pattern (`async with get_db() as db`)
+
+  ## Architecture
+  - Async throughout — all route handlers, DB operations, and services use `async def`
+  - Feature-based file organization: routers/, services/, and tests/ grouped by feature
+  - Thin routers — business logic lives in services/
+  - Streaming: WebSocket for live recording, SSE for long-running operations
+  - Frontend SPA with hash-based routing, API calls through `lib/api.ts` wrapper
+  - Build output served as static files from FastAPI
+
+  ## Conventions
+  - Python: snake_case, full type annotations, relative imports within talekeeper package, prefix private functions with _
+  - Frontend: PascalCase for .svelte files, scoped CSS, Svelte 5 runes only
+  - Git commits: `<type>: <description>` or `<type>(<scope>): <description>` (feat, fix, refactor, chore, docs)
+  - DB access always via `async with get_db() as db` context manager
+  - Pydantic models for all request/response validation
+  - HTTPException with proper status codes for API errors
+
+  ## Existing Capabilities (main specs)
+  audio-capture, audio-upload, campaign-management, chunked-audio-processing, dnd-visual-theme,
+  export-and-sharing, keyboard-shortcuts, llm-provider, session-re-diarization, session-tabs,
+  speaker-diarization, speaker-merge, streaming-retranscription, summary-generation, transcription,
+  ux-shared-components, voice-signatures
+
+rules:
+  proposal:
+    - Include a "Why" section explaining the user problem or motivation, not just the feature
+    - Include a "What Changes" section with concrete, specific changes (not vague descriptions)
+    - List new and modified capabilities — every proposal must map to capability specs
+    - Include an "Impact" section covering database, backend, frontend, and integration effects
+    - Keep proposals focused — one coherent change per proposal, not a grab-bag of improvements
+    - Never propose cloud-hosted services or external SaaS dependencies — TaleKeeper is self-hosted and local-first
+    - Never propose replacing SQLite with a client-server database
+    - Never propose adding user authentication or multi-tenancy — this is a single-user local app
+
+  design:
+    - Start with "Context" summarizing relevant current state (existing schema, services, data flow)
+    - Include "Goals / Non-Goals" to explicitly scope what the change does and does NOT do
+    - Every decision must have a "Why" rationale and at least one "Alternative considered"
+    - Address concurrency, failure modes, and migration for any database changes
+    - Include a "Risks / Trade-offs" section — no design is risk-free
+    - Prefer reusing existing infrastructure (llm_client.py, SSE patterns, existing endpoints) over building new
+    - Keep the async-everywhere pattern — never introduce blocking I/O in route handlers or services
+    - Database migrations must be additive-only (SQLite has limited ALTER TABLE support)
+    - Frontend changes must use Svelte 5 runes — never propose legacy reactive syntax
+
+  spec:
+    - Use RFC 2119 language (SHALL, MUST, SHOULD) for requirements
+    - Every requirement needs at least one scenario with GIVEN/WHEN/THEN or WHEN/AND/THEN structure
+    - Include failure/edge-case scenarios, not just happy paths
+    - Specs describe WHAT the system does, not HOW it's implemented — no code, no file paths
+    - Mark sections clearly as ADDED, MODIFIED, or REMOVED when writing delta specs
+    - Keep requirements testable — avoid vague terms like "fast", "user-friendly", "intuitive"
+
+  tasks:
+    - Group tasks by layer/concern (Database, Backend, Frontend) with numbered groups
+    - Each task should be completable independently — avoid tasks that require partial work across layers
+    - Use checkbox format `- [ ] N.M Description` for tracking
+    - Include the specific file or module to modify when it's unambiguous
+    - Database/migration tasks come first — they unblock everything else
+    - Backend tasks before frontend tasks — API must exist before the UI can call it
+    - Keep individual tasks small enough to verify in isolation (one endpoint, one component, one migration)
+    - Never include tasks for writing documentation, changelogs, or updating README files
+    - Always include integration between layers as explicit tasks (e.g., "wire frontend to new endpoint")
