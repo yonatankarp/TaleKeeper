@@ -10,7 +10,7 @@ router = APIRouter(tags=["sessions"])
 
 
 class SessionCreate(BaseModel):
-    name: str
+    name: str | None = None
     date: str
     language: str | None = None
 
@@ -40,16 +40,30 @@ class SessionUpdate(BaseModel):
 async def create_session(campaign_id: int, body: SessionCreate) -> dict:
     async with get_db() as db:
         existing = await db.execute_fetchall(
-            "SELECT id, language FROM campaigns WHERE id = ?", (campaign_id,)
+            "SELECT id, language, session_start_number FROM campaigns WHERE id = ?",
+            (campaign_id,),
         )
         if not existing:
             raise HTTPException(status_code=404, detail="Campaign not found")
 
-        language = body.language if body.language is not None else existing[0]["language"]
+        campaign = existing[0]
+        language = body.language if body.language is not None else campaign["language"]
+
+        # Auto-assign session_number: max of (next sequential, campaign start number)
+        max_row = await db.execute_fetchall(
+            "SELECT MAX(session_number) as max_num FROM sessions WHERE campaign_id = ?",
+            (campaign_id,),
+        )
+        max_num = max_row[0]["max_num"]
+        next_sequential = (max_num + 1) if max_num is not None else 0
+        session_number = max(next_sequential, campaign["session_start_number"])
+
+        # Auto-set name if not provided
+        name = body.name if body.name else f"Session {session_number}"
 
         cursor = await db.execute(
-            "INSERT INTO sessions (campaign_id, name, date, language) VALUES (?, ?, ?, ?)",
-            (campaign_id, body.name, body.date, language),
+            "INSERT INTO sessions (campaign_id, name, date, language, session_number) VALUES (?, ?, ?, ?, ?)",
+            (campaign_id, name, body.date, language, session_number),
         )
         session_id = cursor.lastrowid
         rows = await db.execute_fetchall(
@@ -146,3 +160,55 @@ async def delete_session(session_id: int) -> dict:
         await db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
 
     return {"deleted": True}
+
+
+@router.post("/api/sessions/{session_id}/generate-name")
+async def generate_name(session_id: int) -> dict:
+    """Trigger LLM-based session name generation. Prefers summary over transcript."""
+    from talekeeper.services.session_naming import generate_session_name, _get_summary_text
+    from talekeeper.services.summarization import format_transcript
+
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM sessions WHERE id = ?", (session_id,)
+        )
+        if not rows:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        session = dict(rows[0])
+
+        summary_text = await _get_summary_text(db, session_id)
+
+        segments = await db.execute_fetchall(
+            """SELECT ts.text, ts.start_time, ts.end_time,
+                      sp.diarization_label, sp.player_name, sp.character_name
+               FROM transcript_segments ts
+               LEFT JOIN speakers sp ON sp.id = ts.speaker_id
+               WHERE ts.session_id = ?
+               ORDER BY ts.start_time""",
+            (session_id,),
+        )
+        if not segments:
+            raise HTTPException(
+                status_code=400,
+                detail="Session has no transcript segments",
+            )
+
+    if summary_text:
+        title = await generate_session_name(summary_text, from_summary=True)
+    else:
+        transcript_text = format_transcript([dict(s) for s in segments])
+        title = await generate_session_name(transcript_text)
+
+    session_number = session["session_number"]
+    new_name = f"Session {session_number}: {title}" if session_number is not None else title
+
+    async with get_db() as db:
+        await db.execute(
+            "UPDATE sessions SET name = ?, updated_at = datetime('now') WHERE id = ?",
+            (new_name, session_id),
+        )
+        rows = await db.execute_fetchall(
+            "SELECT * FROM sessions WHERE id = ?", (session_id,)
+        )
+    return dict(rows[0])

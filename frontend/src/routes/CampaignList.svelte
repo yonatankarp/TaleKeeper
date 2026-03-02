@@ -5,7 +5,7 @@
   import Spinner from '../components/Spinner.svelte';
   import ConfirmDialog from '../components/ConfirmDialog.svelte';
 
-  type Campaign = { id: number; name: string; description: string; language: string; num_speakers: number; created_at: string };
+  type Campaign = { id: number; name: string; description: string; language: string; num_speakers: number; session_start_number: number; created_at: string };
 
   let campaigns = $state<Campaign[]>([]);
   let pageLoading = $state(true);
@@ -17,8 +17,10 @@
   let editDesc = $state('');
   let newLang = $state('en');
   let newNumSpeakers = $state(5);
+  let newSessionStartNumber = $state(0);
   let editLang = $state('en');
   let editNumSpeakers = $state(5);
+  let editSessionStartNumber = $state(0);
   let confirmDeleteId = $state<number | null>(null);
   let createNameError = $state(false);
 
@@ -33,11 +35,12 @@
       return;
     }
     createNameError = false;
-    await api.post('/campaigns', { name: newName, description: newDesc, language: newLang, num_speakers: newNumSpeakers });
+    await api.post('/campaigns', { name: newName, description: newDesc, language: newLang, num_speakers: newNumSpeakers, session_start_number: newSessionStartNumber });
     newName = '';
     newDesc = '';
     newLang = 'en';
     newNumSpeakers = 5;
+    newSessionStartNumber = 0;
     showCreate = false;
     await load();
   }
@@ -48,11 +51,12 @@
     editDesc = c.description;
     editLang = c.language;
     editNumSpeakers = c.num_speakers;
+    editSessionStartNumber = c.session_start_number;
   }
 
   async function saveEdit() {
     if (editingId === null) return;
-    await api.put(`/campaigns/${editingId}`, { name: editName, description: editDesc, language: editLang, num_speakers: editNumSpeakers });
+    await api.put(`/campaigns/${editingId}`, { name: editName, description: editDesc, language: editLang, num_speakers: editNumSpeakers, session_start_number: editSessionStartNumber });
     editingId = null;
     await load();
   }
@@ -86,6 +90,9 @@
       <label class="field-label">Number of Speakers
         <input type="number" min="1" max="10" bind:value={newNumSpeakers} />
       </label>
+      <label class="field-label">First session number
+        <input type="number" min="0" bind:value={newSessionStartNumber} />
+      </label>
       <div class="btn-group">
         <button class="btn btn-primary" onclick={create}>Create</button>
         <button class="btn" onclick={() => (showCreate = false)}>Cancel</button>
@@ -104,6 +111,9 @@
           </label>
           <label class="field-label">Number of Speakers
             <input type="number" min="1" max="10" bind:value={editNumSpeakers} />
+          </label>
+          <label class="field-label">First session number
+            <input type="number" min="0" bind:value={editSessionStartNumber} />
           </label>
           <div class="btn-group">
             <button class="btn btn-primary" onclick={saveEdit}>Save</button>

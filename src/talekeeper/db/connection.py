@@ -29,6 +29,65 @@ async def _apply_schema(db: aiosqlite.Connection) -> None:
     await _migrate_add_voice_signatures_table(db)
     await _migrate_add_session_images_table(db)
     await _migrate_add_roster_description(db)
+    await _migrate_add_session_number_column(db)
+    await _migrate_add_session_start_number_column(db)
+    await _migrate_backfill_session_numbers(db)
+
+
+async def _migrate_add_session_number_column(db: aiosqlite.Connection) -> None:
+    """Add session_number column to sessions if missing."""
+    cols = await db.execute_fetchall("PRAGMA table_info(sessions)")
+    col_names = [c["name"] for c in cols]
+    if "session_number" not in col_names:
+        await db.execute(
+            "ALTER TABLE sessions ADD COLUMN session_number INTEGER"
+        )
+
+
+async def _migrate_backfill_session_numbers(db: aiosqlite.Connection) -> None:
+    """Backfill session_number for existing sessions and update generic names."""
+    # Check if any sessions lack a session_number
+    rows = await db.execute_fetchall(
+        "SELECT id FROM sessions WHERE session_number IS NULL LIMIT 1"
+    )
+    if not rows:
+        return
+
+    # Get all campaigns
+    campaigns = await db.execute_fetchall("SELECT id, session_start_number FROM campaigns")
+    for campaign in campaigns:
+        campaign_id = campaign["id"]
+        start_number = campaign["session_start_number"]
+
+        # Get sessions for this campaign ordered by creation
+        sessions = await db.execute_fetchall(
+            "SELECT id, name FROM sessions WHERE campaign_id = ? AND session_number IS NULL "
+            "ORDER BY created_at ASC, id ASC",
+            (campaign_id,),
+        )
+        for i, session in enumerate(sessions):
+            num = start_number + i
+            await db.execute(
+                "UPDATE sessions SET session_number = ? WHERE id = ?",
+                (num, session["id"]),
+            )
+            # Update generic names (empty or default-looking) to "Session N"
+            name = session["name"] or ""
+            if not name.strip() or name.strip().lower().startswith("session"):
+                await db.execute(
+                    "UPDATE sessions SET name = ? WHERE id = ?",
+                    (f"Session {num}", session["id"]),
+                )
+
+
+async def _migrate_add_session_start_number_column(db: aiosqlite.Connection) -> None:
+    """Add session_start_number column to campaigns if missing."""
+    cols = await db.execute_fetchall("PRAGMA table_info(campaigns)")
+    col_names = [c["name"] for c in cols]
+    if "session_start_number" not in col_names:
+        await db.execute(
+            "ALTER TABLE campaigns ADD COLUMN session_start_number INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 async def _migrate_add_session_images_table(db: aiosqlite.Connection) -> None:
@@ -127,6 +186,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
     description TEXT DEFAULT '',
     language TEXT NOT NULL DEFAULT 'en',
     num_speakers INTEGER NOT NULL DEFAULT 5,
+    session_start_number INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -138,6 +198,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     date TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'draft',
     language TEXT NOT NULL DEFAULT 'en',
+    session_number INTEGER,
     audio_path TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))

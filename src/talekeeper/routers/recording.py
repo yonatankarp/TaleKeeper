@@ -386,6 +386,10 @@ async def process_audio(session_id: int, num_speakers: int | None = Query(defaul
 
             yield _sse_event("done", {"segments_count": segments_count})
 
+            # Fire-and-forget: generate session name from transcript
+            from talekeeper.services.session_naming import maybe_generate_and_update_name
+            asyncio.create_task(maybe_generate_and_update_name(session_id))
+
         except Exception as exc:
             yield _sse_event("error", {"message": str(exc)})
             async with get_db() as db:

@@ -15,6 +15,7 @@ class CampaignCreate(BaseModel):
     description: str = ""
     language: str = "en"
     num_speakers: int = Field(default=5, ge=1, le=10)
+    session_start_number: int = 0
 
     @field_validator("language")
     @classmethod
@@ -29,6 +30,7 @@ class CampaignUpdate(BaseModel):
     description: str | None = None
     language: str | None = None
     num_speakers: int | None = Field(default=None, ge=1, le=10)
+    session_start_number: int | None = None
 
     @field_validator("language")
     @classmethod
@@ -38,12 +40,51 @@ class CampaignUpdate(BaseModel):
         return v
 
 
+async def _renumber_sessions(
+    db, campaign_id: int, start_number: int
+) -> None:
+    """Renumber all sessions in a campaign starting from start_number.
+
+    Updates session_number and auto-generated names (Session N / Session N: Title).
+    """
+    import re
+
+    pattern = re.compile(r"^Session \d+(?:\s*:\s*(.+))?$")
+
+    sessions = await db.execute_fetchall(
+        "SELECT id, name, session_number FROM sessions WHERE campaign_id = ? "
+        "ORDER BY session_number ASC, created_at ASC, id ASC",
+        (campaign_id,),
+    )
+    for i, session in enumerate(sessions):
+        new_number = start_number + i
+        if new_number == session["session_number"]:
+            continue
+
+        # Update the session number
+        await db.execute(
+            "UPDATE sessions SET session_number = ? WHERE id = ?",
+            (new_number, session["id"]),
+        )
+
+        # Update auto-generated names: "Session N" → "Session M" or "Session N: Title" → "Session M: Title"
+        name = session["name"] or ""
+        match = pattern.match(name.strip())
+        if match:
+            title_part = match.group(1)
+            new_name = f"Session {new_number}: {title_part}" if title_part else f"Session {new_number}"
+            await db.execute(
+                "UPDATE sessions SET name = ? WHERE id = ?",
+                (new_name, session["id"]),
+            )
+
+
 @router.post("")
 async def create_campaign(body: CampaignCreate) -> dict:
     async with get_db() as db:
         cursor = await db.execute(
-            "INSERT INTO campaigns (name, description, language, num_speakers) VALUES (?, ?, ?, ?)",
-            (body.name, body.description, body.language, body.num_speakers),
+            "INSERT INTO campaigns (name, description, language, num_speakers, session_start_number) VALUES (?, ?, ?, ?, ?)",
+            (body.name, body.description, body.language, body.num_speakers, body.session_start_number),
         )
         campaign_id = cursor.lastrowid
         row = await db.execute_fetchall(
@@ -95,6 +136,9 @@ async def update_campaign(campaign_id: int, body: CampaignUpdate) -> dict:
         if body.num_speakers is not None:
             fields.append("num_speakers = ?")
             values.append(body.num_speakers)
+        if body.session_start_number is not None:
+            fields.append("session_start_number = ?")
+            values.append(body.session_start_number)
 
         if fields:
             fields.append("updated_at = datetime('now')")
@@ -103,6 +147,10 @@ async def update_campaign(campaign_id: int, body: CampaignUpdate) -> dict:
                 f"UPDATE campaigns SET {', '.join(fields)} WHERE id = ?",
                 values,
             )
+
+        # Renumber sessions when session_start_number changes
+        if body.session_start_number is not None:
+            await _renumber_sessions(db, campaign_id, body.session_start_number)
 
         rows = await db.execute_fetchall(
             "SELECT * FROM campaigns WHERE id = ?", (campaign_id,)

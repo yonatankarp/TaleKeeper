@@ -8,8 +8,8 @@
   type Props = { campaignId: number };
   let { campaignId }: Props = $props();
 
-  type Campaign = { id: number; name: string; description: string; language: string; num_speakers: number };
-  type Session = { id: number; name: string; date: string; status: string; audio_path: string | null; transcript_count: number; summary_count: number; image_count: number };
+  type Campaign = { id: number; name: string; description: string; language: string; num_speakers: number; session_start_number: number };
+  type Session = { id: number; name: string; date: string; status: string; audio_path: string | null; session_number: number | null; transcript_count: number; summary_count: number; image_count: number };
   type Dashboard = { session_count: number; total_recorded_time: number; most_recent_session_date: string | null };
 
   let campaign = $state<Campaign | null>(null);
@@ -22,7 +22,34 @@
   let newSessionLang = $state('en');
   let confirmDeleteSessionId = $state<number | null>(null);
   let confirmDeleteCampaign = $state(false);
-  let sessionNameError = $state(false);
+  let showSettings = $state(false);
+  let editName = $state('');
+  let editDesc = $state('');
+  let editLang = $state('en');
+  let editNumSpeakers = $state(5);
+  let editSessionStartNumber = $state(0);
+
+  function openSettings() {
+    if (!campaign) return;
+    editName = campaign.name;
+    editDesc = campaign.description;
+    editLang = campaign.language;
+    editNumSpeakers = campaign.num_speakers;
+    editSessionStartNumber = campaign.session_start_number;
+    showSettings = true;
+  }
+
+  async function saveSettings() {
+    await api.put(`/campaigns/${campaignId}`, {
+      name: editName,
+      description: editDesc,
+      language: editLang,
+      num_speakers: editNumSpeakers,
+      session_start_number: editSessionStartNumber,
+    });
+    showSettings = false;
+    await load();
+  }
 
   async function load() {
     [campaign, sessions, dashboard] = await Promise.all([
@@ -34,16 +61,14 @@
   }
 
   async function createSession() {
-    if (!newSessionName.trim()) {
-      sessionNameError = true;
-      return;
-    }
-    sessionNameError = false;
-    await api.post(`/campaigns/${campaignId}/sessions`, {
-      name: newSessionName,
+    const body: Record<string, unknown> = {
       date: newSessionDate,
       language: newSessionLang,
-    });
+    };
+    if (newSessionName.trim()) {
+      body.name = newSessionName;
+    }
+    await api.post(`/campaigns/${campaignId}/sessions`, body);
     newSessionName = '';
     showNewSession = false;
     await load();
@@ -78,6 +103,15 @@
     return classes[status] ?? '';
   }
 
+  let nextSessionNumber = $derived.by(() => {
+    if (!campaign) return 0;
+    const maxNum = sessions.reduce((max, s) => {
+      return s.session_number != null && s.session_number > max ? s.session_number : max;
+    }, -1);
+    const nextSeq = maxNum >= 0 ? maxNum + 1 : 0;
+    return Math.max(nextSeq, campaign.session_start_number);
+  });
+
   $effect(() => { load(); });
 
   $effect(() => {
@@ -100,6 +134,7 @@
         {/if}
       </div>
       <div class="btn-group">
+        <button class="btn btn-icon" onclick={openSettings} title="Campaign settings"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg> Settings</button>
         <button class="btn btn-icon" onclick={() => navigate(`/campaigns/${campaignId}/roster`)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 17.5L3 6V3h3l11.5 11.5"/><path d="M13 19l6-6"/><path d="M16 16l4 4"/><path d="M9.5 6.5L21 18v3h-3L6.5 9.5"/><path d="M11 5l-6 6"/><path d="M8 8L4 4"/></svg> Party</button>
         {#if sessions.length > 0}
           <button class="btn" onclick={() => navigate(`/sessions/${sessions[0].id}`)}>Continue Last Session</button>
@@ -110,6 +145,33 @@
         <button class="btn btn-danger" onclick={() => (confirmDeleteCampaign = true)}>Delete Campaign</button>
       </div>
     </div>
+
+    {#if showSettings}
+      <div class="card form-card settings-panel">
+        <h3>Campaign Settings</h3>
+        <label class="field-label">Name
+          <input type="text" bind:value={editName} />
+        </label>
+        <label class="field-label">Description
+          <textarea bind:value={editDesc} placeholder="Optional"></textarea>
+        </label>
+        <label class="field-label">Language
+          <LanguageSelect value={editLang} onchange={(code) => (editLang = code)} />
+        </label>
+        <div class="settings-row">
+          <label class="field-label">Number of speakers
+            <input type="number" min="1" max="10" bind:value={editNumSpeakers} />
+          </label>
+          <label class="field-label">First session number
+            <input type="number" min="0" bind:value={editSessionStartNumber} />
+          </label>
+        </div>
+        <div class="btn-group">
+          <button class="btn btn-primary" onclick={saveSettings}>Save</button>
+          <button class="btn" onclick={() => (showSettings = false)}>Cancel</button>
+        </div>
+      </div>
+    {/if}
 
     {#if dashboard}
       <div class="stats">
@@ -130,8 +192,7 @@
 
     {#if showNewSession}
       <div class="card form-card">
-        <input type="text" placeholder="Session name" bind:value={newSessionName} class:input-error={sessionNameError} oninput={() => (sessionNameError = false)} />
-        {#if sessionNameError}<p class="field-error">Session name is required</p>{/if}
+        <input type="text" placeholder="Auto-generated, e.g. Session {nextSessionNumber}" bind:value={newSessionName} />
         <input type="date" bind:value={newSessionDate} />
         <label class="field-label">Language
           <LanguageSelect value={newSessionLang} onchange={(code) => (newSessionLang = code)} />
@@ -324,8 +385,30 @@
     margin-bottom: 0.25rem;
   }
 
-  .input-error { border-color: var(--danger) !important; }
-  .field-error { color: var(--danger); font-size: 0.8rem; margin: -0.25rem 0 0.5rem; }
+  .settings-panel h3 { margin: 0 0 1rem; }
+
+  .settings-panel textarea {
+    width: 100%;
+    padding: 0.5rem;
+    margin-bottom: 0.5rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-family: inherit;
+    box-sizing: border-box;
+    min-height: 60px;
+    resize: vertical;
+  }
+
+  .settings-row {
+    display: flex;
+    gap: 1rem;
+  }
+
+  .settings-row .field-label {
+    flex: 1;
+  }
 
   .empty { text-align: center; color: var(--text-muted); margin-top: 2rem; }
 </style>
