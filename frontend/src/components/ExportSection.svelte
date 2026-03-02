@@ -84,6 +84,13 @@
     Export Transcript
   </button>
 
+  {#if summaries.length > 0}
+    <h3>Batch Export</h3>
+    <button class="btn" onclick={() => downloadFile(`/api/sessions/${sessionId}/export/summaries-all?printable=true`)}>
+      Export All Printable (ZIP)
+    </button>
+  {/if}
+
   {#if fullSummaries.length > 0}
     <h3>Session Summary</h3>
     {#each fullSummaries as s}
@@ -99,9 +106,6 @@
 
   {#if povSummaries.length > 0}
     <h3>Character POV Summaries</h3>
-    <button class="btn" onclick={() => downloadFile(`/api/sessions/${sessionId}/export/pov-all`)}>
-      Export All POV Summaries (ZIP)
-    </button>
     {#each povSummaries as s}
       <div class="export-row">
         <span class="label">{s.character_name ?? 'Unknown'}</span>
