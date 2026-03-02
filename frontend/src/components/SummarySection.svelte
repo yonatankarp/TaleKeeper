@@ -3,8 +3,8 @@
   import ConfirmDialog from './ConfirmDialog.svelte';
   import Spinner from './Spinner.svelte';
 
-  type Props = { sessionId: number };
-  let { sessionId }: Props = $props();
+  type Props = { sessionId: number; onSummariesChange?: () => void };
+  let { sessionId, onSummariesChange }: Props = $props();
 
   type Summary = {
     id: number;
@@ -40,6 +40,7 @@
 
   async function load() {
     summaries = await api.get<Summary[]>(`/sessions/${sessionId}/summaries`);
+    onSummariesChange?.();
   }
 
   async function checkLlm() {

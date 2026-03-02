@@ -14,7 +14,7 @@
   let emailBody = $state('');
   let sending = $state(false);
 
-  async function load() {
+  export async function load() {
     summaries = await api.get<Summary[]>(`/sessions/${sessionId}/summaries`);
   }
 
@@ -86,9 +86,14 @@
 
   {#if summaries.length > 0}
     <h3>Batch Export</h3>
-    <button class="btn" onclick={() => downloadFile(`/api/sessions/${sessionId}/export/summaries-all?printable=true`)}>
-      Export All Printable (ZIP)
-    </button>
+    <div class="export-row">
+      <button class="btn" onclick={() => downloadFile(`/api/sessions/${sessionId}/export/summaries-all`)}>
+        Export All PDFs (ZIP)
+      </button>
+      <button class="btn" onclick={() => downloadFile(`/api/sessions/${sessionId}/export/summaries-all?printable=true`)}>
+        Export All Printable (ZIP)
+      </button>
+    </div>
   {/if}
 
   {#if fullSummaries.length > 0}

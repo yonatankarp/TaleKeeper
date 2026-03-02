@@ -12,12 +12,15 @@
   type Props = { sessionId: number };
   let { sessionId }: Props = $props();
 
-  type Session = { id: number; campaign_id: number; name: string; date: string; status: string; audio_path: string | null; language: string };
+  type Session = { id: number; campaign_id: number; name: string; date: string; status: string; audio_path: string | null; language: string; session_number: number | null };
 
   let session = $state<Session | null>(null);
   let pageLoading = $state(true);
   let activeTab = $state('recording');
   let audioPlayer: AudioPlayer | undefined = $state();
+  let editingName = $state(false);
+  let editNameValue = $state('');
+  let regeneratingName = $state(false);
 
   // Recording badge state
   type RecordingBadgeState = { state: 'idle' | 'recording' | 'paused'; elapsed: number };
@@ -36,6 +39,39 @@
   function handleRecordingStateChange(state: 'idle' | 'recording' | 'paused', elapsed: number) {
     recordingBadge = { state, elapsed };
     if (state === 'idle') load();
+  }
+
+  function startEditName() {
+    editNameValue = session?.name ?? '';
+    editingName = true;
+  }
+
+  async function saveEditName() {
+    if (!session || !editNameValue.trim()) return;
+    await api.put(`/sessions/${sessionId}`, { name: editNameValue.trim() });
+    session.name = editNameValue.trim();
+    editingName = false;
+  }
+
+  function cancelEditName() {
+    editingName = false;
+  }
+
+  function handleNameKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') saveEditName();
+    else if (e.key === 'Escape') cancelEditName();
+  }
+
+  async function regenerateName() {
+    regeneratingName = true;
+    try {
+      const updated = await api.post<Session>(`/sessions/${sessionId}/generate-name`);
+      if (session) session.name = updated.name;
+    } catch (err) {
+      // silently fail — user can try again
+    } finally {
+      regeneratingName = false;
+    }
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -69,6 +105,7 @@
 
   let hasAudio = $derived(session?.audio_path != null);
   let transcriptView: TranscriptView | undefined = $state();
+  let exportSection: ExportSection | undefined = $state();
 
   function handleTranscriptSegment(seg: { text: string; start_time: number; end_time: number }) {
     transcriptView?.addLiveSegment(seg);
@@ -85,7 +122,22 @@
     <div class="page-header">
       <div>
         <div class="header-row">
-          <h2>{session.name}</h2>
+          {#if editingName}
+            <input
+              class="name-edit-input"
+              type="text"
+              bind:value={editNameValue}
+              onkeydown={handleNameKeydown}
+              onblur={saveEditName}
+            />
+          {:else}
+            <button class="editable-name" onclick={startEditName} title="Click to edit"><h2>{session.name}</h2></button>
+          {/if}
+          {#if session.status === 'completed' && !editingName}
+            <button class="btn btn-sm btn-regen" onclick={regenerateName} disabled={regeneratingName}>
+              {regeneratingName ? 'Generating...' : 'Regenerate Name'}
+            </button>
+          {/if}
           {#if recordingBadge.state !== 'idle'}
             <div class="rec-badge">
               <span class="rec-dot" class:pulsing={recordingBadge.state === 'recording'}></span>
@@ -144,13 +196,13 @@
         />
       </div>
       <div class:hidden={activeTab !== 'summaries'}>
-        <SummarySection sessionId={sessionId} />
+        <SummarySection sessionId={sessionId} onSummariesChange={() => exportSection?.load()} />
       </div>
       <div class:hidden={activeTab !== 'illustrations'}>
         <IllustrationsSection sessionId={sessionId} />
       </div>
       <div class:hidden={activeTab !== 'export'}>
-        <ExportSection sessionId={sessionId} />
+        <ExportSection bind:this={exportSection} sessionId={sessionId} />
       </div>
     </div>
   {/if}
@@ -214,6 +266,52 @@
     font-weight: 700;
     text-transform: uppercase;
   }
+
+  .editable-name {
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    border-bottom: 1px dashed transparent;
+  }
+
+  .editable-name h2 { margin: 0; }
+
+  .editable-name:hover {
+    border-bottom-color: var(--accent);
+  }
+
+  .name-edit-input {
+    font-size: 1.5rem;
+    font-weight: bold;
+    background: var(--bg-input);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    color: var(--text);
+    padding: 0.25rem 0.5rem;
+    font-family: inherit;
+  }
+
+  .btn-sm {
+    padding: 0.25rem 0.75rem;
+    font-size: 0.8rem;
+  }
+
+  .btn-regen {
+    padding: 0.25rem 0.75rem;
+    font-size: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .btn-regen:hover { background: var(--bg-hover); color: var(--text); }
+  .btn-regen:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .meta { color: var(--text-muted); font-size: 0.85rem; }
 
