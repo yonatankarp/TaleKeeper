@@ -78,3 +78,67 @@ def test_diarize(mock_cluster, mock_extract, mock_load):
     assert segments[1].speaker_label == "SPEAKER_01"
     assert segments[1].start_time == 3.0
     assert segments[1].end_time == 4.5
+
+
+@patch("talekeeper.services.diarization._load_waveform")
+@patch("talekeeper.services.diarization._extract_windowed_embeddings")
+@patch("sklearn.cluster.AgglomerativeClustering")
+def test_diarize_with_num_speakers(mock_agglo_cls, mock_extract, mock_load):
+    """When num_speakers is provided, AgglomerativeClustering uses n_clusters."""
+    mock_load.return_value = MagicMock()
+    mock_extract.return_value = (
+        np.zeros((4, 192)),
+        [(0.0, 1.0), (1.0, 2.0), (2.0, 3.0), (3.0, 4.0)],
+    )
+
+    mock_instance = MagicMock()
+    mock_instance.fit_predict.return_value = np.array([0, 0, 1, 1])
+    mock_agglo_cls.return_value = mock_instance
+
+    segments = diarize("fake.wav", num_speakers=2)
+
+    # 4 windows, but adjacent same-speaker windows get merged -> 2 segments
+    assert len(segments) == 2
+    assert segments[0].speaker_label == "SPEAKER_00"
+    assert segments[1].speaker_label == "SPEAKER_01"
+
+    # Verify AgglomerativeClustering was called with n_clusters=2
+    mock_agglo_cls.assert_called_once_with(
+        n_clusters=2,
+        metric="cosine",
+        linkage="average",
+    )
+
+
+@patch("talekeeper.services.diarization._load_waveform")
+@patch("talekeeper.services.diarization._extract_windowed_embeddings")
+@patch("sklearn.cluster.AgglomerativeClustering")
+def test_diarize_without_num_speakers(mock_agglo_cls, mock_extract, mock_load):
+    """When num_speakers is None, AgglomerativeClustering uses distance_threshold."""
+    mock_load.return_value = MagicMock()
+    mock_extract.return_value = (
+        np.zeros((3, 192)),
+        [(0.0, 1.5), (1.5, 3.0), (3.0, 4.5)],
+    )
+
+    mock_instance = MagicMock()
+    mock_instance.fit_predict.return_value = np.array([0, 1, 0])
+    mock_agglo_cls.return_value = mock_instance
+
+    segments = diarize("fake.wav")
+
+    # 3 windows with labels [0, 1, 0] — no adjacent merges possible -> 3 segments
+    assert len(segments) == 3
+    assert segments[0].speaker_label == "SPEAKER_00"
+    assert segments[1].speaker_label == "SPEAKER_01"
+    assert segments[2].speaker_label == "SPEAKER_00"
+
+    # Verify AgglomerativeClustering was called with distance_threshold (not n_clusters)
+    from talekeeper.services.diarization import COSINE_DISTANCE_THRESHOLD
+
+    mock_agglo_cls.assert_called_once_with(
+        n_clusters=None,
+        distance_threshold=COSINE_DISTANCE_THRESHOLD,
+        metric="cosine",
+        linkage="average",
+    )
