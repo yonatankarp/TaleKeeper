@@ -305,8 +305,8 @@ async def export_text(summary_id: int) -> Response:
     )
 
 
-@router.get("/api/sessions/{session_id}/export/pov-all")
-async def export_all_pov(session_id: int) -> StreamingResponse:
+@router.get("/api/sessions/{session_id}/export/summaries-all")
+async def export_all_summaries(session_id: int, printable: bool = False) -> StreamingResponse:
     from weasyprint import HTML
 
     async with get_db() as db:
@@ -317,30 +317,33 @@ async def export_all_pov(session_id: int) -> StreamingResponse:
                JOIN sessions s ON s.id = su.session_id
                JOIN campaigns c ON c.id = s.campaign_id
                LEFT JOIN speakers sp ON sp.id = su.speaker_id
-               WHERE su.session_id = ? AND su.type = 'pov'""",
+               WHERE su.session_id = ?""",
             (session_id,),
         )
 
     if not rows:
-        raise HTTPException(status_code=404, detail="No POV summaries found")
+        raise HTTPException(status_code=404, detail="No summaries found")
 
-    image_bytes = await _get_latest_session_image(session_id)
+    image_bytes = None if printable else await _get_latest_session_image(session_id)
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for row in rows:
             summary = dict(row)
             content_html = _content_to_html(summary["content"])
-            html = _build_pdf_html(summary, content_html, image_bytes)
+            html = _build_pdf_html(summary, content_html, image_bytes, printable=printable)
             pdf_bytes = HTML(string=html).write_pdf()
-            char_name = (summary.get("character_name") or "unknown").lower().replace(" ", "-")
-            zf.writestr(f"{char_name}-pov.pdf", pdf_bytes)
+            if summary["type"] == "pov":
+                char_name = (summary.get("character_name") or "unknown").lower().replace(" ", "-")
+                zf.writestr(f"{char_name}-pov.pdf", pdf_bytes)
+            else:
+                zf.writestr("session-chronicle.pdf", pdf_bytes)
 
     buf.seek(0)
     return StreamingResponse(
         buf,
         media_type="application/zip",
-        headers={"Content-Disposition": 'attachment; filename="pov-summaries.zip"'},
+        headers={"Content-Disposition": 'attachment; filename="summaries.zip"'},
     )
 
 
