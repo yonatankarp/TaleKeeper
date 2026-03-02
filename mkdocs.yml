@@ -1,0 +1,74 @@
+site_name: TaleKeeper
+site_description: Record, transcribe, and summarize your D&D sessions
+site_url: https://yonatankarp.github.io/TaleKeeper/
+
+repo_url: https://github.com/yonatankarp/TaleKeeper
+repo_name: yonatankarp/TaleKeeper
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: deep orange
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: deep orange
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+  icon:
+    logo: material/book-open-variant
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.keys
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+docs_dir: docs/guide
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/index.md
+    - Setup Wizard: getting-started/setup-wizard.md
+  - Campaigns:
+    - Managing Campaigns: campaigns/index.md
+    - Character Roster: campaigns/roster.md
+  - Recording:
+    - Live Recording: recording/index.md
+    - Uploading Audio: recording/uploading.md
+  - Transcription:
+    - How It Works: transcription/index.md
+    - Retranscription: transcription/retranscription.md
+  - Speakers:
+    - Speaker Assignment: speakers/index.md
+    - Merging Speakers: speakers/merging.md
+    - Voice Signatures: speakers/voice-signatures.md
+  - Summaries:
+    - Session Recaps: summaries/index.md
+    - Character Journals: summaries/pov-journals.md
+  - Illustrations: illustrations/index.md
+  - Export:
+    - PDF Export: export/index.md
+    - Text & Transcript: export/text-export.md
+    - Email Sharing: export/email-sharing.md
+  - Settings: settings/index.md
+  - Tips & Tricks: tips-and-tricks.md

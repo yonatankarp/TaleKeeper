@@ -156,6 +156,42 @@ data/
 
 Back up this folder to preserve your recordings and transcripts.
 
+## Documentation
+
+TaleKeeper uses [MkDocs](https://www.mkdocs.org/) with the Material theme for its documentation site.
+
+To serve the docs locally using the project venv:
+
+```bash
+.venv/bin/pip install mkdocs-material
+.venv/bin/mkdocs serve
+```
+
+Or if you prefer a standalone venv for docs:
+
+```bash
+python3 -m venv .docs-venv
+source .docs-venv/bin/activate
+pip install mkdocs-material
+mkdocs serve
+```
+
+This starts a local server at `http://127.0.0.1:8000` with live-reload — edits to files in `docs/guide/` are reflected immediately.
+
+To build a static copy:
+
+```bash
+.venv/bin/mkdocs build
+```
+
+The generated site is written to `site/`. To serve the built site locally:
+
+```bash
+.venv/bin/python -m http.server -d site 8080
+```
+
+Then open `http://127.0.0.1:8080` in your browser.
+
 ## Hardware Notes
 
 - Targets Apple Silicon Macs (M1/M2+) with Metal acceleration for ML workloads
