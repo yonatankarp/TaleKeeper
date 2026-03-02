@@ -149,6 +149,34 @@ async def get_image_file(image_id: int):
     return FileResponse(file_path, media_type="image/png")
 
 
+@router.delete("/api/sessions/{session_id}/images")
+async def delete_all_images(session_id: int) -> dict:
+    """Delete all images for a session (files + metadata)."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM session_images WHERE session_id = ?", (session_id,)
+        )
+
+    # Delete files from disk
+    for row in rows:
+        file_path = Path(row["file_path"])
+        if file_path.exists():
+            file_path.unlink()
+
+    # Clean up empty session directory
+    if rows:
+        parent = Path(rows[0]["file_path"]).parent
+        if parent.exists() and not any(parent.iterdir()):
+            parent.rmdir()
+
+    async with get_db() as db:
+        await db.execute(
+            "DELETE FROM session_images WHERE session_id = ?", (session_id,)
+        )
+
+    return {"deleted": len(rows)}
+
+
 @router.delete("/api/images/{image_id}", status_code=204)
 async def delete_image(image_id: int):
     """Delete an image file and its metadata."""

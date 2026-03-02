@@ -15,6 +15,7 @@
   let imageProviderMsg = $state('');
   let promptText = $state('');
   let confirmDeleteId = $state<number | null>(null);
+  let confirmClearAll = $state(false);
   let genElapsed = $state(0);
   let genTimer: ReturnType<typeof setInterval> | null = null;
   let cancelStream: (() => void) | null = null;
@@ -97,6 +98,12 @@
     await load();
   }
 
+  async function clearAll() {
+    await api.del(`/sessions/${sessionId}/images`);
+    confirmClearAll = false;
+    await load();
+  }
+
   $effect(() => { load(); checkImageProvider(); });
 </script>
 
@@ -146,7 +153,10 @@
   </div>
 
   {#if images.length > 0}
-    <h3>Generated Images</h3>
+    <div class="section-header">
+      <h3>Generated Images</h3>
+      <button class="btn btn-sm btn-danger" onclick={() => (confirmClearAll = true)} disabled={generating}>Clear All</button>
+    </div>
     <div class="image-list">
       {#each images as img}
         <div class="image-card">
@@ -178,6 +188,16 @@
     confirmLabel="Delete"
     onconfirm={() => deleteImage(confirmDeleteId!)}
     oncancel={() => (confirmDeleteId = null)}
+  />
+{/if}
+
+{#if confirmClearAll}
+  <ConfirmDialog
+    title="Clear All Images"
+    message="Are you sure you want to delete all images for this session? This cannot be undone."
+    confirmLabel="Clear All"
+    onconfirm={clearAll}
+    oncancel={() => (confirmClearAll = false)}
   />
 {/if}
 
@@ -306,6 +326,14 @@
   .btn-danger { color: var(--danger); }
   .btn-sm { padding: 0.25rem 0.75rem; font-size: 0.8rem; }
   .btn-group { display: flex; gap: 0.5rem; }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .section-header h3 { margin: 0; }
 
   .empty { color: var(--text-faint); text-align: center; padding: 2rem; }
 </style>

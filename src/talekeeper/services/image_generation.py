@@ -17,7 +17,14 @@ Guidelines:
 - Style: epic fantasy illustration, detailed, dramatic lighting
 - Do NOT include text, speech bubbles, or written words in the scene
 - Do NOT use meta-instructions like "generate an image of..." — just describe the scene directly
-- Focus on one key moment, not the entire session"""
+- Focus on one key moment, not the entire session
+- The scene MUST be set in the fantasy world described in the transcript. Do NOT introduce
+  modern or real-world elements (computers, phones, monitors, cars, etc.)
+- Only depict events, locations, and characters that actually appear in the transcript.
+  Do NOT invent scenes that did not happen.
+- Refer to characters by their character names, never by player names.
+- Ignore out-of-character table talk, game mechanics, dice rolls, and DM instructions.
+  Only use the in-world narrative content for the scene."""
 
 SCENE_DESCRIPTION_PROMPT = """Based on the following session content, write a vivid scene description
 suitable for AI image generation. Pick the single most dramatic or memorable moment and describe

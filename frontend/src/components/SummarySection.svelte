@@ -25,6 +25,7 @@
   let llmMsg = $state('');
   let confirmRegenType = $state<string | null>(null);
   let confirmDeleteId = $state<number | null>(null);
+  let confirmClearAll = $state(false);
   let genElapsed = $state(0);
   let genTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -116,6 +117,12 @@
     await load();
   }
 
+  async function clearAll() {
+    await api.del(`/sessions/${sessionId}/summaries`);
+    confirmClearAll = false;
+    await load();
+  }
+
   $effect(() => { load(); checkLlm(); });
 
   let fullSummaries = $derived(summaries.filter(s => s.type === 'full'));
@@ -149,6 +156,11 @@
         Generate POV Summaries
       {/if}
     </button>
+    {#if summaries.length > 0}
+      <button class="btn btn-danger" onclick={() => (confirmClearAll = true)} disabled={loading}>
+        Clear All
+      </button>
+    {/if}
   </div>
 
   <div class="gen-hint">
@@ -231,6 +243,16 @@
     confirmLabel="Delete"
     onconfirm={() => deleteSummary(confirmDeleteId!)}
     oncancel={() => (confirmDeleteId = null)}
+  />
+{/if}
+
+{#if confirmClearAll}
+  <ConfirmDialog
+    title="Clear All Summaries"
+    message="Are you sure you want to delete all summaries for this session? This cannot be undone."
+    confirmLabel="Clear All"
+    onconfirm={clearAll}
+    oncancel={() => (confirmClearAll = false)}
   />
 {/if}
 

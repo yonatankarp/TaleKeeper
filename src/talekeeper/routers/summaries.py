@@ -97,7 +97,6 @@ async def generate_summary(session_id: int, body: GenerateSummaryRequest) -> dic
             content = await generate_pov_summary(
                 transcript_text,
                 character_name=sp["character_name"],
-                player_name=sp["player_name"] or "Unknown",
                 base_url=base_url,
                 api_key=api_key,
                 model=model,
@@ -159,6 +158,16 @@ async def delete_summary(summary_id: int) -> dict:
 
         await db.execute("DELETE FROM summaries WHERE id = ?", (summary_id,))
     return {"deleted": True}
+
+
+@router.delete("/api/sessions/{session_id}/summaries")
+async def delete_all_summaries(session_id: int) -> dict:
+    """Delete all summaries for a session."""
+    async with get_db() as db:
+        cursor = await db.execute(
+            "DELETE FROM summaries WHERE session_id = ?", (session_id,)
+        )
+    return {"deleted": cursor.rowcount}
 
 
 @router.post("/api/sessions/{session_id}/regenerate-summary")

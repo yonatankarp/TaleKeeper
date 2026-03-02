@@ -7,11 +7,16 @@ Your job is to summarize ONLY what is actually said in the transcript.
 Do NOT invent, fabricate, or hallucinate any content that is not in the transcript.
 Do NOT create fictional characters, events, or plot points.
 If the transcript contains no meaningful RPG content, say so plainly.
-Use third person, past tense. Be specific about names and events mentioned in the transcript."""
+Use third person, past tense. Be specific about names and events mentioned in the transcript.
+Output ONLY the summary text itself. Do NOT include any preamble, introduction, or meta-commentary
+such as "Here is the summary" or "Based on the transcript". Just write the narrative directly.
+Write the story from an in-world perspective. Do not reference the game mechanics, the DM,
+dice rolls, or out-of-character table talk. Treat everything as events that happened in the world."""
 
 FULL_SUMMARY_PROMPT = """Summarize the following session transcript into a narrative recap.
 IMPORTANT: Only include information that is actually present in the transcript below.
 Do NOT make up any names, events, or details that are not in the transcript.
+Always refer to characters by their character names, never by player names.
 If the transcript is empty, repetitive, or contains no meaningful content, state that clearly.
 
 TRANSCRIPT:
@@ -24,11 +29,16 @@ specific character in a tabletop RPG session. Focus on what this character exper
 learned, decided, and how they interacted with other characters and the world.
 Write in first person as the character.
 IMPORTANT: Only reference events, dialogue, and details that actually appear in the transcript.
-Do NOT invent or fabricate any content."""
+Do NOT invent or fabricate any content.
+Output ONLY the journal entry itself. Do NOT include any preamble, introduction, or meta-commentary
+such as "Here is the recap" or "Based on the transcript". Just write the entry directly.
+Write from an in-world perspective. Do not reference the game mechanics, the DM, dice rolls,
+or out-of-character table talk. Treat everything as events that actually happened to the character."""
 
-POV_SUMMARY_PROMPT = """Write a session recap from the perspective of {character_name},
-played by {player_name}. Focus on their personal experience of the session.
+POV_SUMMARY_PROMPT = """Write a session recap from the perspective of {character_name}.
+Focus on their personal experience of the session.
 IMPORTANT: Only include information actually present in the transcript below.
+Always refer to characters by their character names, never by player names.
 If the transcript has no meaningful content, say so.
 
 TRANSCRIPT:
@@ -70,8 +80,10 @@ def format_transcript(segments: list[dict]) -> str:
     lines = []
     for seg in segments:
         speaker = ""
-        if seg.get("character_name") and seg.get("player_name"):
-            speaker = f"{seg['character_name']} ({seg['player_name']})"
+        if seg.get("character_name"):
+            speaker = seg["character_name"]
+        elif seg.get("player_name"):
+            speaker = seg["player_name"]
         elif seg.get("diarization_label"):
             speaker = seg["diarization_label"]
 
@@ -119,7 +131,6 @@ async def generate_full_summary(
 async def generate_pov_summary(
     transcript_text: str,
     character_name: str,
-    player_name: str,
     base_url: str,
     api_key: str | None,
     model: str,
@@ -131,7 +142,6 @@ async def generate_pov_summary(
         prompt = POV_SUMMARY_PROMPT.format(
             transcript=transcript_text,
             character_name=character_name,
-            player_name=player_name,
         )
         return await llm_client.generate(base_url, api_key, model, prompt, system=POV_SUMMARY_SYSTEM)
 
