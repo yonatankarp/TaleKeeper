@@ -6,7 +6,7 @@ import { api, mergeSpeakers, uploadAudio, generateImageStream, reDiarize, proces
 // ---------------------------------------------------------------------------
 
 const mockFetch = vi.fn();
-global.fetch = mockFetch;
+globalThis.fetch = mockFetch;
 
 function createSSEStream(events: string): ReadableStream<Uint8Array> {
   return new ReadableStream({
