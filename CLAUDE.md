@@ -4,9 +4,9 @@ D&D session recording, transcription, and summarization app. FastAPI backend + S
 
 ## Environment
 
-- **Python**: 3.14 (use project venv, NEVER global Python)
+- **Python**: 3.12 (use project venv, NEVER global Python)
 - **Node**: 22+
-- **Venv**: `.venv/bin/python` — always use this for running Python commands
+- **Venv**: `venv/bin/python` — always use this for running Python commands
 - **Database**: SQLite (aiosqlite, WAL mode) at `data/db/talekeeper.db`
 - **System deps**: ffmpeg, Pango, Cairo
 - **Optional**: Ollama for local LLM summaries and image generation
@@ -14,12 +14,12 @@ D&D session recording, transcription, and summarization app. FastAPI backend + S
 ## Commands
 
 ### Backend
-- Run server: `.venv/bin/python -m talekeeper serve --reload --no-browser`
-- Run all tests: `.venv/bin/python -m pytest`
-- Run unit tests: `.venv/bin/python -m pytest tests/unit`
-- Run integration tests: `.venv/bin/python -m pytest tests/integration`
-- Run tests with coverage: `.venv/bin/python -m pytest -v --cov`
-- Install deps: `.venv/bin/pip install -e ".[dev]"`
+- Run server: `venv/bin/python -m talekeeper serve --reload --no-browser`
+- Run all tests: `venv/bin/python -m pytest`
+- Run unit tests: `venv/bin/python -m pytest tests/unit`
+- Run integration tests: `venv/bin/python -m pytest tests/integration`
+- Run tests with coverage: `venv/bin/python -m pytest -v --cov`
+- Install deps: `venv/bin/pip install -e ".[dev]"`
 
 ### Frontend
 - Dev server: `cd frontend && npm run dev`
@@ -82,7 +82,7 @@ D&D session recording, transcription, and summarization app. FastAPI backend + S
 
 ## Rules
 
-- **ALWAYS use `.venv/bin/python` or `.venv/bin/pip`** — never install to or run from global Python
+- **ALWAYS use `venv/bin/python` or `venv/bin/pip`** — never install to or run from global Python
 - Run tests before claiming work is complete
 - Prefer editing existing files over creating new ones
 - Keep routers thin — business logic belongs in `services/`
