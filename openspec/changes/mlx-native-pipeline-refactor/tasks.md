@@ -22,18 +22,18 @@
 
 ## 4. Transcription Service Rewrite
 
-- [ ] 4.1 Rewrite `services/transcription.py`: replace faster-whisper imports with lightning-whisper-mlx, implement `get_model()` with MLX model loading and global caching
-- [ ] 4.2 Implement `unload_model()` in `services/transcription.py` that sets globals to None and calls `mlx.core.metal.clear_cache()`
-- [ ] 4.3 Implement `_run_vad(wav_path)` in `services/transcription.py`: run Silero VAD, return list of speech timestamp ranges
-- [ ] 4.4 Implement `_build_speech_buffer(wav_path, vad_ranges)`: concatenate speech-only regions, return audio buffer + offset map
-- [ ] 4.5 Rewrite `transcribe()` in `services/transcription.py`: VAD pre-pass → speech buffer → lightning-whisper-mlx batched decoding → timestamp remapping
-- [ ] 4.6 Rewrite `transcribe_chunked()` to use new `transcribe()` (VAD + batched decoding per chunk), keeping the existing chunk strategy and primary-zone dedup
-- [ ] 4.7 Remove `transcribe_stream()` function (no longer needed without live transcription)
-- [ ] 4.8 Implement batch size auto-detection: query `sysctl hw.perflevel0.logicalcpu`, map core count to batch size, read override from settings
-- [ ] 4.9 Update `SUPPORTED_LANGUAGES` set if lightning-whisper-mlx supports a different language list
-- [ ] 4.10 Write unit tests for VAD pre-pass (mock Silero, verify speech regions extracted)
-- [ ] 4.11 Write unit tests for `transcribe()` (mock lightning-whisper-mlx, verify VAD → transcribe → timestamp remapping)
-- [ ] 4.12 Write unit tests for batch size auto-detection logic
+- [x] 4.1 Rewrite `services/transcription.py`: replace faster-whisper imports with lightning-whisper-mlx, implement `get_model()` with MLX model loading and global caching
+- [x] 4.2 Implement `unload_model()` in `services/transcription.py` that sets globals to None and calls `mlx.core.metal.clear_cache()`
+- [x] 4.3 Implement `_run_vad(wav_path)` in `services/transcription.py`: run Silero VAD, return list of speech timestamp ranges
+- [x] 4.4 Implement `_build_speech_buffer(wav_path, vad_ranges)`: concatenate speech-only regions, return audio buffer + offset map
+- [x] 4.5 Rewrite `transcribe()` in `services/transcription.py`: VAD pre-pass → speech buffer → lightning-whisper-mlx batched decoding → timestamp remapping
+- [x] 4.6 Rewrite `transcribe_chunked()` to use new `transcribe()` (VAD + batched decoding per chunk), keeping the existing chunk strategy and primary-zone dedup
+- [x] 4.7 Remove `transcribe_stream()` function (no longer needed without live transcription)
+- [x] 4.8 Implement batch size auto-detection: query `sysctl hw.perflevel0.logicalcpu`, map core count to batch size, read override from settings
+- [x] 4.9 Update `SUPPORTED_LANGUAGES` set if lightning-whisper-mlx supports a different language list
+- [x] 4.10 Write unit tests for VAD pre-pass (mock Silero, verify speech regions extracted)
+- [x] 4.11 Write unit tests for `transcribe()` (mock lightning-whisper-mlx, verify VAD → transcribe → timestamp remapping)
+- [x] 4.12 Write unit tests for batch size auto-detection logic
 
 ## 5. Diarization Service Rewrite
 
