@@ -14,11 +14,11 @@
 
 ## 3. LLM Client — Ollama Detection
 
-- [ ] 3.1 Add `_is_ollama(base_url: str) -> bool` function to `services/llm_client.py` with cached endpoint probing (strip `/v1`, probe `/api/tags`)
-- [ ] 3.2 Modify `generate()` in `services/llm_client.py` to inject `extra_body={"options": {"num_ctx": 32768}}` when Ollama is detected
-- [ ] 3.3 Add `unload_model(base_url, api_key, model)` function to `services/llm_client.py` that POSTs `keep_alive: "0"` to Ollama's `/api/generate`
-- [ ] 3.4 Write unit tests for `_is_ollama` detection (mock HTTP responses for Ollama and non-Ollama endpoints)
-- [ ] 3.5 Write unit tests for `generate()` verifying `extra_body` is injected only for Ollama
+- [x] 3.1 Add `_is_ollama(base_url: str) -> bool` function to `services/llm_client.py` with cached endpoint probing (strip `/v1`, probe `/api/tags`)
+- [x] 3.2 Modify `generate()` in `services/llm_client.py` to inject `extra_body={"options": {"num_ctx": 32768}}` when Ollama is detected
+- [x] 3.3 Add `unload_model(base_url, api_key, model)` function to `services/llm_client.py` that POSTs `keep_alive: "0"` to Ollama's `/api/generate`
+- [x] 3.4 Write unit tests for `_is_ollama` detection (mock HTTP responses for Ollama and non-Ollama endpoints)
+- [x] 3.5 Write unit tests for `generate()` verifying `extra_body` is injected only for Ollama
 
 ## 4. Transcription Service Rewrite
 
