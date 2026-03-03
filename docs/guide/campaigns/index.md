@@ -35,6 +35,7 @@ Click on the campaign name or settings to modify:
 - **Name and description** — update anytime
 - **Language** — changes the default for new sessions
 - **Speaker count** — adjusts diarization defaults
+- **Voice Signature Confidence** — controls how strictly voice signatures are matched (0–1 range, default 0.65). Lower values are more lenient, higher values are stricter
 - **Session start number** — for campaigns that didn't start at session 1
 
 !!! tip "Hidden Feature: Session Renumbering"

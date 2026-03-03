@@ -23,14 +23,15 @@ vi.mock('../lib/wizard.svelte', () => ({
 import { api } from '../lib/api';
 
 const mockSettings: Record<string, string> = {
-  whisper_model: 'medium',
+  whisper_model: 'distil-large-v3',
   llm_base_url: 'http://localhost:11434/v1',
   llm_api_key: '',
   llm_model: 'llama3.1:8b',
-  image_base_url: '',
-  image_api_key: '',
   image_model: '',
-  live_transcription: 'false',
+  image_steps: '4',
+  image_guidance_scale: '0',
+  hf_token: '',
+  whisper_batch_size: '',
   data_dir: '',
 };
 
@@ -58,26 +59,41 @@ describe('SettingsPage', () => {
     expect(screen.getByText('Settings')).toBeInTheDocument();
   });
 
-  it('shows Transcription section', async () => {
+  it('shows Transcription section with whisper model and batch size', async () => {
     vi.mocked(api.get).mockResolvedValue(mockSettings);
     render(SettingsPage);
     await flush();
     expect(screen.getByText('Transcription')).toBeInTheDocument();
     expect(screen.getByText('Whisper Model')).toBeInTheDocument();
+    expect(screen.getByText('Batch Size')).toBeInTheDocument();
   });
 
-  it('shows LLM Provider section', async () => {
+  it('shows Providers section with HuggingFace and LLM Provider', async () => {
     vi.mocked(api.get).mockResolvedValue(mockSettings);
     render(SettingsPage);
     await flush();
+    expect(screen.getByText('Providers')).toBeInTheDocument();
+    expect(screen.getByText('HuggingFace')).toBeInTheDocument();
     expect(screen.getByText('LLM Provider')).toBeInTheDocument();
   });
 
-  it('shows Image Generation section', async () => {
+  it('shows HuggingFace token field with link to pyannote license', async () => {
+    vi.mocked(api.get).mockResolvedValue(mockSettings);
+    render(SettingsPage);
+    await flush();
+    expect(screen.getByText('Access Token')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('hf_...')).toBeInTheDocument();
+    expect(screen.getByText('pyannote model license')).toBeInTheDocument();
+  });
+
+  it('shows Image Generation section with steps and guidance scale', async () => {
     vi.mocked(api.get).mockResolvedValue(mockSettings);
     render(SettingsPage);
     await flush();
     expect(screen.getByText('Image Generation')).toBeInTheDocument();
+    expect(screen.getByText('Steps')).toBeInTheDocument();
+    expect(screen.getByText('Guidance Scale')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('FLUX.2-Klein-4B-Distilled')).toBeInTheDocument();
   });
 
   it('shows Email (SMTP) section', async () => {
@@ -108,28 +124,21 @@ describe('SettingsPage', () => {
     expect(screen.getByText('Run Setup Wizard')).toBeInTheDocument();
   });
 
-  it('shows Test Connection buttons for LLM and Image', async () => {
+  it('shows Test Connection for LLM and Check Availability for image', async () => {
     vi.mocked(api.get).mockResolvedValue(mockSettings);
     render(SettingsPage);
     await flush();
-    const testButtons = screen.getAllByText('Test Connection');
-    expect(testButtons.length).toBe(2);
+    expect(screen.getByText('Test Connection')).toBeInTheDocument();
+    expect(screen.getByText('Check Availability')).toBeInTheDocument();
   });
 
-  it('shows whisper model select with options', async () => {
+  it('shows whisper model select with distil-large-v3 option', async () => {
     vi.mocked(api.get).mockResolvedValue(mockSettings);
     const { container } = render(SettingsPage);
     await flush();
     const select = container.querySelector('select') as HTMLSelectElement;
     expect(select).toBeInTheDocument();
-    expect(select.value).toBe('medium');
-  });
-
-  it('shows live transcription checkbox', async () => {
-    vi.mocked(api.get).mockResolvedValue(mockSettings);
-    render(SettingsPage);
-    await flush();
-    expect(screen.getByText('Live transcription during recording')).toBeInTheDocument();
+    expect(select.value).toBe('distil-large-v3');
   });
 
   it('calls api.put when Save Settings is clicked', async () => {
@@ -146,18 +155,15 @@ describe('SettingsPage', () => {
     vi.mocked(api.get).mockResolvedValue(mockSettings);
     render(SettingsPage);
     await flush();
-    // "http://localhost:11434/v1" appears for both LLM and Image base URLs
-    const baseUrlInputs = screen.getAllByPlaceholderText('http://localhost:11434/v1');
-    expect(baseUrlInputs).toHaveLength(2);
+    expect(screen.getByPlaceholderText('http://localhost:11434/v1')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('llama3.1:8b')).toBeInTheDocument();
   });
 
-  it('shows Image Generation fields', async () => {
+  it('shows LLM model recommendations', async () => {
     vi.mocked(api.get).mockResolvedValue(mockSettings);
     render(SettingsPage);
     await flush();
-    expect(screen.getByText('Image Generation')).toBeInTheDocument();
-    expect(screen.getByPlaceholderText('x/flux2-klein:9b')).toBeInTheDocument();
+    expect(screen.getByText(/Recommended models/)).toBeInTheDocument();
   });
 
   it('shows SMTP fields', async () => {
@@ -166,7 +172,6 @@ describe('SettingsPage', () => {
     await flush();
     expect(screen.getByPlaceholderText('smtp.gmail.com')).toBeInTheDocument();
     expect(screen.getByPlaceholderText('587')).toBeInTheDocument();
-    // "you@example.com" appears for both Username and Sender Address
     const emailInputs = screen.getAllByPlaceholderText('you@example.com');
     expect(emailInputs).toHaveLength(2);
   });
@@ -178,11 +183,11 @@ describe('SettingsPage', () => {
     expect(screen.getByText('Browse')).toBeInTheDocument();
   });
 
-  it('shows hint about live transcription', async () => {
+  it('shows batch size hint about auto-detection', async () => {
     vi.mocked(api.get).mockResolvedValue(mockSettings);
     render(SettingsPage);
     await flush();
-    expect(screen.getByText(/When enabled, preview segments appear/)).toBeInTheDocument();
+    expect(screen.getByText(/automatic detection based on your Apple Silicon/)).toBeInTheDocument();
   });
 
   it('shows hint about data directory', async () => {

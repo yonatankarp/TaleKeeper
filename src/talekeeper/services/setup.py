@@ -2,7 +2,8 @@
 
 from talekeeper.db import get_db
 from talekeeper.paths import get_user_data_dir, get_db_dir
-from talekeeper.services import llm_client, image_client
+from talekeeper.services import llm_client
+from talekeeper.services import image_generation
 
 
 async def check_first_run() -> dict:
@@ -22,10 +23,9 @@ async def check_first_run() -> dict:
     except Exception:
         checks["llm_connected"] = False
 
-    # Check image provider
+    # Check image provider (in-process mflux)
     try:
-        img_config = await image_client.resolve_config()
-        img_health = await image_client.health_check(img_config["base_url"], img_config["api_key"], img_config["model"])
+        img_health = image_generation.health_check()
         checks["image_connected"] = img_health["status"] == "ok"
     except Exception:
         checks["image_connected"] = False

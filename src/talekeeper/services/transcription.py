@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 _model = None
 _model_name: str | None = None
 
-DEFAULT_MODEL = "mlx-community/whisper-large-v3-turbo"
+DEFAULT_MODEL = "large-v3"
 
 SUPPORTED_LANGUAGES: set[str] = {
     "af", "am", "ar", "as", "az", "ba", "be", "bg", "bn", "bo", "br", "bs",

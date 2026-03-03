@@ -24,13 +24,14 @@ A collection of power-user tips, hidden features, and best practices to get the 
 Sessions move through these states automatically:
 
 ```
-draft → recording → transcribing → completed
+draft → recording → audio_ready → transcribing → completed
 ```
 
 | Status | Meaning |
 |--------|---------|
 | **Draft** | Session created, no audio yet |
 | **Recording** | Microphone is live |
+| **Audio Ready** | Audio captured, awaiting processing |
 | **Transcribing** | Processing audio (transcription + diarization) |
 | **Completed** | Ready for summaries, illustrations, and export |
 
@@ -44,7 +45,7 @@ draft → recording → transcribing → completed
 
 **Model Selection:**
 
-- Start with **medium** (the default) — it's the best balance of speed and accuracy for most sessions
+- Start with **distil-large-v3** (the default) — it offers excellent accuracy at fast speeds on Apple Silicon
 - Try **large-v3** for important sessions, heavily accented speech, or mixed-language games
 - Use **tiny** or **base** only for quick tests or if your machine struggles with larger models
 
@@ -75,7 +76,8 @@ Set the language at campaign level (applies to new sessions) or override per-ses
 
 | Feature | Where to Find It |
 |---------|-----------------|
-| Live transcription during recording | [Settings](settings/index.md) |
+| Process All pipeline (one-click transcribe → diarize → summarize → illustrate) | [Recording](recording/index.md) |
+| Voice signature confidence threshold | [Voice Signatures](speakers/voice-signatures.md) |
 | D&D Beyond character import | [Roster](campaigns/roster.md) |
 | PDF character sheet extraction | [Roster](campaigns/roster.md) |
 | Generic URL character import | [Roster](campaigns/roster.md) |

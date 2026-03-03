@@ -16,7 +16,7 @@ router = APIRouter(tags=["transcripts"])
 
 
 class RetranscribeRequest(BaseModel):
-    model_size: str = "medium"
+    model_name: str | None = None
     language: str | None = None
     num_speakers: int | None = Field(default=None, ge=1, le=10)
 
@@ -89,7 +89,10 @@ async def retranscribe(session_id: int, body: RetranscribeRequest) -> StreamingR
                     (session_id,),
                 )
 
-            for item in transcribe_chunked(audio_path, model_size=body.model_size, language=language):
+            kwargs = {"language": language}
+            if body.model_name:
+                kwargs["model_name"] = body.model_name
+            for item in transcribe_chunked(audio_path, **kwargs):
                 if isinstance(item, ChunkProgress):
                     yield _sse_event("progress", {
                         "chunk": item.chunk,

@@ -137,7 +137,7 @@ async def test_retranscribe_happy_path(
 
     resp = await client.post(
         f"/api/sessions/{session_id}/retranscribe",
-        json={"model_size": "medium"},
+        json={"language": "en"},
     )
     assert resp.status_code == 200
 
@@ -201,7 +201,7 @@ async def test_retranscribe_no_audio(client: AsyncClient) -> None:
 
     resp = await client.post(
         f"/api/sessions/{session_id}/retranscribe",
-        json={"model_size": "medium"},
+        json={"language": "en"},
     )
     assert resp.status_code == 400
     assert "No audio" in resp.json()["detail"]
@@ -212,7 +212,7 @@ async def test_retranscribe_session_not_found(client: AsyncClient) -> None:
     """POST /api/sessions/{id}/retranscribe returns 404 for non-existent session."""
     resp = await client.post(
         "/api/sessions/99999/retranscribe",
-        json={"model_size": "medium"},
+        json={"language": "en"},
     )
     assert resp.status_code == 404
     assert "Session not found" in resp.json()["detail"]

@@ -1,10 +1,21 @@
-"""Scene description and image generation pipeline service."""
+"""Scene description and in-process image generation pipeline using mflux."""
 
+import logging
+import os
 import uuid
 
 from talekeeper.db import get_db
 from talekeeper.paths import get_session_images_dir
-from talekeeper.services import llm_client, image_client
+from talekeeper.services import llm_client
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_IMAGE_MODEL = "flux2-klein-4b"
+DEFAULT_IMAGE_STEPS = 4
+DEFAULT_IMAGE_GUIDANCE_SCALE = 0.0
+
+_model = None
+_model_name: str | None = None
 
 SCENE_DESCRIPTION_SYSTEM = """You are a visual scene describer for tabletop RPG sessions.
 Your job is to read a session transcript or summary and craft a single vivid, concise
@@ -34,6 +45,67 @@ SESSION CONTENT:
 {content}
 
 Write a concise, vivid scene description (2-4 sentences):"""
+
+
+async def _resolve_image_config() -> dict:
+    """Resolve image generation config: settings > env vars > defaults."""
+    settings: dict[str, str] = {}
+    try:
+        async with get_db() as db:
+            rows = await db.execute_fetchall(
+                "SELECT key, value FROM settings WHERE key IN ('image_model', 'image_steps', 'image_guidance_scale')"
+            )
+            for r in rows:
+                if r["value"]:
+                    settings[r["key"]] = r["value"]
+    except Exception:
+        pass
+
+    model = settings.get("image_model") or os.environ.get("IMAGE_MODEL") or DEFAULT_IMAGE_MODEL
+    steps = int(settings.get("image_steps") or os.environ.get("IMAGE_STEPS") or DEFAULT_IMAGE_STEPS)
+    guidance_scale = float(
+        settings.get("image_guidance_scale") or os.environ.get("IMAGE_GUIDANCE_SCALE") or DEFAULT_IMAGE_GUIDANCE_SCALE
+    )
+
+    return {"model": model, "steps": steps, "guidance_scale": guidance_scale}
+
+
+def _get_model(model_name: str = DEFAULT_IMAGE_MODEL):
+    """Load and cache the FLUX model via mflux."""
+    global _model, _model_name
+
+    if _model is not None and _model_name == model_name:
+        return _model
+
+    from mflux.models.flux2.variants.txt2img.flux2_klein import Flux2Klein
+    from mflux.models.common.config.model_config import ModelConfig
+
+    logger.info("Loading FLUX model: %s", model_name)
+    model_config = ModelConfig.from_name(model_name=model_name)
+    _model = Flux2Klein(model_config=model_config)
+    _model_name = model_name
+    return _model
+
+
+def unload_model() -> None:
+    """Unload the cached FLUX model to free memory."""
+    global _model, _model_name
+    _model = None
+    _model_name = None
+    try:
+        import mlx.core
+        mlx.core.metal.clear_cache()
+    except Exception:
+        pass
+
+
+def health_check() -> dict:
+    """Verify mflux is importable and report availability."""
+    try:
+        from mflux.models.flux2.variants.txt2img.flux2_klein import Flux2Klein  # noqa: F401
+        return {"status": "ok", "engine": "mflux"}
+    except ImportError as e:
+        return {"status": "error", "message": f"mflux not available: {e}"}
 
 
 async def _get_character_descriptions(session_id: int) -> str:
@@ -77,7 +149,7 @@ async def generate_session_image(
     prompt: str,
     scene_description: str | None = None,
 ) -> dict:
-    """Generate an image using the image provider and save it to disk + DB.
+    """Generate an image using mflux in-process and save to disk + DB.
 
     Args:
         session_id: The session this image belongs to.
@@ -87,25 +159,38 @@ async def generate_session_image(
     Returns:
         The image metadata dict from the database.
     """
-    # Resolve image provider config
-    config = await image_client.resolve_config()
-    img_base_url, img_api_key, img_model = config["base_url"], config["api_key"], config["model"]
+    import random
+
+    config = await _resolve_image_config()
+    model_name = config["model"]
+    steps = config["steps"]
+    guidance_scale = config["guidance_scale"]
+
+    model = _get_model(model_name)
 
     # Generate image
-    image_bytes = await image_client.generate_image(img_base_url, img_api_key, img_model, prompt)
+    seed = random.randint(0, 2**32 - 1)
+    generated = model.generate_image(
+        seed=seed,
+        prompt=prompt,
+        width=1024,
+        height=1024,
+        num_inference_steps=steps,
+        guidance=guidance_scale,
+    )
 
     # Save to disk
     images_dir = get_session_images_dir(session_id)
     filename = f"{uuid.uuid4()}.png"
     file_path = images_dir / filename
-    file_path.write_bytes(image_bytes)
+    generated.image.save(str(file_path))
 
     # Save metadata to DB
     async with get_db() as db:
         cursor = await db.execute(
             """INSERT INTO session_images (session_id, file_path, prompt, scene_description, model_used)
                VALUES (?, ?, ?, ?, ?)""",
-            (session_id, str(file_path), prompt, scene_description, img_model),
+            (session_id, str(file_path), prompt, scene_description, model_name),
         )
         rows = await db.execute_fetchall(
             "SELECT * FROM session_images WHERE id = ?", (cursor.lastrowid,)

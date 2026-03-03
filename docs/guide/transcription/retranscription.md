@@ -16,7 +16,7 @@
 
 ![Chronicle tab with the Retranscribe and Re-diarize buttons visible above the transcript, along with language and speaker count controls](../images/chronicle-tab.png)
 
-1. Select a different **Whisper model** size
+1. Select a different **Whisper model**
 2. Optionally change the **language**
 3. Optionally adjust the **speaker count**
 4. Click **Retranscribe**

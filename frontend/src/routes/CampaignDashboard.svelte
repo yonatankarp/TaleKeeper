@@ -8,7 +8,7 @@
   type Props = { campaignId: number };
   let { campaignId }: Props = $props();
 
-  type Campaign = { id: number; name: string; description: string; language: string; num_speakers: number; session_start_number: number };
+  type Campaign = { id: number; name: string; description: string; language: string; num_speakers: number; session_start_number: number; similarity_threshold: number };
   type Session = { id: number; name: string; date: string; status: string; audio_path: string | null; session_number: number | null; transcript_count: number; summary_count: number; image_count: number };
   type Dashboard = { session_count: number; total_recorded_time: number; most_recent_session_date: string | null };
 
@@ -28,6 +28,7 @@
   let editLang = $state('en');
   let editNumSpeakers = $state(5);
   let editSessionStartNumber = $state(0);
+  let editSimilarityThreshold = $state(0.65);
 
   function openSettings() {
     if (!campaign) return;
@@ -36,6 +37,7 @@
     editLang = campaign.language;
     editNumSpeakers = campaign.num_speakers;
     editSessionStartNumber = campaign.session_start_number;
+    editSimilarityThreshold = campaign.similarity_threshold ?? 0.65;
     showSettings = true;
   }
 
@@ -46,6 +48,7 @@
       language: editLang,
       num_speakers: editNumSpeakers,
       session_start_number: editSessionStartNumber,
+      similarity_threshold: editSimilarityThreshold,
     });
     showSettings = false;
     await load();
@@ -166,6 +169,10 @@
             <input type="number" min="0" bind:value={editSessionStartNumber} />
           </label>
         </div>
+        <label class="field-label">Voice Signature Confidence: {editSimilarityThreshold.toFixed(2)}
+          <input type="range" min="0" max="1" step="0.05" bind:value={editSimilarityThreshold} class="slider" />
+          <span class="slider-hint">Lower = more lenient matching, Higher = stricter matching. Default: 0.65</span>
+        </label>
         <div class="btn-group">
           <button class="btn btn-primary" onclick={saveSettings}>Save</button>
           <button class="btn" onclick={() => (showSettings = false)}>Cancel</button>
@@ -408,6 +415,16 @@
 
   .settings-row .field-label {
     flex: 1;
+  }
+
+  .slider {
+    width: 100%;
+    cursor: pointer;
+  }
+
+  .slider-hint {
+    font-size: 0.75rem;
+    color: var(--text-muted);
   }
 
   .empty { text-align: center; color: var(--text-muted); margin-top: 2rem; }

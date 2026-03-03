@@ -205,6 +205,87 @@ export function reDiarize(
   };
 }
 
+export type ProcessAllResult = {
+  segments_count: number;
+  summaries_count: number;
+  image: Record<string, unknown> | null;
+};
+
+export function processAll(
+  sessionId: number,
+  callbacks: {
+    onPhase: (phase: string) => void;
+    onProgress?: (chunk: number, total: number) => void;
+    onDone: (result: ProcessAllResult) => void;
+    onError: (message: string) => void;
+  },
+  numSpeakers?: number,
+): { cancel: () => void } {
+  let cancelled = false;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+
+  (async () => {
+    try {
+      const params = numSpeakers != null ? `?num_speakers=${numSpeakers}` : '';
+      const res = await fetch(`${BASE}/sessions/${sessionId}/process-all${params}`, {
+        method: 'POST',
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        callbacks.onError(typeof err.detail === 'string' ? err.detail : res.statusText);
+        return;
+      }
+
+      reader = res.body?.getReader() ?? null;
+      if (!reader) { callbacks.onError('No response body'); return; }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let currentEvent = '';
+
+      function processLines(lines: string[]) {
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith('data: ') && currentEvent) {
+            const data = JSON.parse(line.slice(6));
+            if (currentEvent === 'phase') callbacks.onPhase(data.phase);
+            else if (currentEvent === 'progress') callbacks.onProgress?.(data.chunk, data.total_chunks);
+            else if (currentEvent === 'done') callbacks.onDone(data);
+            else if (currentEvent === 'error') callbacks.onError(data.message || 'Pipeline failed');
+            currentEvent = '';
+          } else if (line.trim() === '') {
+            currentEvent = '';
+          }
+        }
+      }
+
+      while (!cancelled) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        processLines(lines);
+      }
+
+      if (buffer.trim()) {
+        processLines(buffer.split('\n'));
+      }
+    } catch (e) {
+      if (!cancelled) callbacks.onError(e instanceof Error ? e.message : 'Pipeline failed');
+    }
+  })();
+
+  return {
+    cancel() {
+      cancelled = true;
+      reader?.cancel();
+    },
+  };
+}
+
 export function processAudio(
   sessionId: number,
   onProgress: (chunk: number, total: number) => void,

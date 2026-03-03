@@ -3,7 +3,6 @@
 import asyncio
 import json
 import mimetypes
-import tempfile
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -17,76 +16,6 @@ router = APIRouter(tags=["recording"])
 
 # Track active recording session (in-process lock)
 _active_recording_session: int | None = None
-
-
-async def _run_transcription_on_chunk(
-    chunk_dir: Path,
-    current_chunk_index: int,
-    session_id: int,
-    websocket: WebSocket,
-    cumulative_offset: float,
-    language: str = "en",
-    model_size: str = "medium",
-) -> float:
-    """Transcribe the new audio since the last transcription.
-
-    Concatenates all chunks from 0 (for valid WebM header) to current,
-    converts to WAV, slices from cumulative_offset onwards, and transcribes
-    only the new portion. Returns the new cumulative offset.
-    """
-    try:
-        import io
-        from pydub import AudioSegment
-        from talekeeper.services.transcription import transcribe
-
-        # Concatenate ALL chunks from 0 to get a valid WebM (needs header from chunk 0)
-        all_data = b""
-        for i in range(current_chunk_index):
-            chunk_file = chunk_dir / f"chunk_{i:03d}.webm"
-            if chunk_file.exists():
-                all_data += chunk_file.read_bytes()
-
-        if not all_data:
-            return cumulative_offset
-
-        # Convert full WebM to audio, then slice only the new portion
-        full_audio = AudioSegment.from_file(io.BytesIO(all_data), format="webm")
-        offset_ms = int(cumulative_offset * 1000)
-        new_portion = full_audio[offset_ms:]
-
-        if len(new_portion) == 0:
-            return cumulative_offset
-
-        new_duration_sec = len(new_portion) / 1000.0
-
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-            wav_path = Path(tmp.name)
-
-        try:
-            new_portion.set_channels(1).set_frame_rate(16000).export(str(wav_path), format="wav")
-
-            segments = transcribe(wav_path, model_size=model_size, language=language)
-
-            for seg in segments:
-                await websocket.send_json({
-                    "type": "transcript",
-                    "text": seg.text,
-                    "start_time": seg.start_time + cumulative_offset,
-                    "end_time": seg.end_time + cumulative_offset,
-                })
-
-                async with get_db() as db:
-                    await db.execute(
-                        "INSERT INTO transcript_segments (session_id, text, start_time, end_time) VALUES (?, ?, ?, ?)",
-                        (session_id, seg.text, seg.start_time + cumulative_offset, seg.end_time + cumulative_offset),
-                    )
-
-            return cumulative_offset + new_duration_sec
-        finally:
-            if wav_path.exists():
-                wav_path.unlink()
-    except Exception:
-        return cumulative_offset  # Don't crash the recording if transcription fails
 
 
 @router.websocket("/ws/recording/{session_id}")
@@ -112,15 +41,6 @@ async def recording_ws(websocket: WebSocket, session_id: int) -> None:
 
         session = dict(rows[0])
         campaign_id = session["campaign_id"]
-        session_language = session.get("language", "en")
-
-        # Read global settings
-        setting_rows = await db.execute_fetchall(
-            "SELECT key, value FROM settings WHERE key IN ('live_transcription', 'whisper_model')"
-        )
-        settings_map = {row["key"]: row["value"] for row in setting_rows}
-        live_transcription = settings_map.get("live_transcription") == "true"
-        whisper_model = settings_map.get("whisper_model", "medium")
 
         # Update session status to recording
         await db.execute(
@@ -140,8 +60,6 @@ async def recording_ws(websocket: WebSocket, session_id: int) -> None:
     chunk_dir.mkdir(parents=True, exist_ok=True)
 
     chunk_count = 0
-    cumulative_offset = 0.0
-    transcription_in_progress = False
     num_speakers_override: int | None = None
 
     try:
@@ -149,27 +67,9 @@ async def recording_ws(websocket: WebSocket, session_id: int) -> None:
             data = await websocket.receive()
 
             if "bytes" in data:
-                # Write chunk to numbered file on disk
                 chunk_file = chunk_dir / f"chunk_{chunk_count:03d}.webm"
                 chunk_file.write_bytes(data["bytes"])
                 chunk_count += 1
-
-                # Run incremental transcription every ~10 chunks (skip if previous still running or live transcription disabled)
-                if live_transcription and chunk_count % 10 == 0 and not transcription_in_progress:
-                    current_chunk = chunk_count
-
-                    async def _do_transcribe(ci: int, offset: float) -> None:
-                        nonlocal cumulative_offset, transcription_in_progress
-                        transcription_in_progress = True
-                        try:
-                            new_offset = await _run_transcription_on_chunk(
-                                chunk_dir, ci, session_id, websocket, offset, session_language, whisper_model
-                            )
-                            cumulative_offset = new_offset
-                        finally:
-                            transcription_in_progress = False
-
-                    asyncio.create_task(_do_transcribe(current_chunk, cumulative_offset))
             elif "text" in data:
                 msg = json.loads(data["text"])
                 if msg.get("type") == "stop":
@@ -304,6 +204,10 @@ async def process_audio(session_id: int, num_speakers: int | None = Query(defaul
         TranscriptSegment,
         ChunkProgress,
     )
+    from talekeeper.services.resource_orchestration import (
+        cleanup_transcription,
+        cleanup_diarization,
+    )
 
     async with get_db() as db:
         rows = await db.execute_fetchall(
@@ -325,7 +229,7 @@ async def process_audio(session_id: int, num_speakers: int | None = Query(defaul
         model_rows = await db.execute_fetchall(
             "SELECT value FROM settings WHERE key = 'whisper_model'"
         )
-        model_size = model_rows[0]["value"] if model_rows else "medium"
+        model_name = model_rows[0]["value"] if model_rows and model_rows[0]["value"] else None
 
     async def sse_generator() -> AsyncIterator[str]:
         segments_count = 0
@@ -343,7 +247,10 @@ async def process_audio(session_id: int, num_speakers: int | None = Query(defaul
                     (session_id,),
                 )
 
-            for item in transcribe_chunked(audio_path, model_size=model_size, language=language):
+            kwargs = {"language": language}
+            if model_name:
+                kwargs["model_name"] = model_name
+            for item in transcribe_chunked(audio_path, **kwargs):
                 if isinstance(item, ChunkProgress):
                     yield _sse_event("progress", {
                         "chunk": item.chunk,
@@ -363,6 +270,8 @@ async def process_audio(session_id: int, num_speakers: int | None = Query(defaul
                     })
                     segments_count += 1
 
+            cleanup_transcription()
+
             # Signal phase change to frontend
             yield _sse_event("phase", {"phase": "diarization"})
 
@@ -377,6 +286,8 @@ async def process_audio(session_id: int, num_speakers: int | None = Query(defaul
                 if wav_path.exists():
                     wav_path.unlink()
 
+            cleanup_diarization()
+
             # Mark session as completed
             async with get_db() as db:
                 await db.execute(
@@ -387,6 +298,216 @@ async def process_audio(session_id: int, num_speakers: int | None = Query(defaul
             yield _sse_event("done", {"segments_count": segments_count})
 
             # Fire-and-forget: generate session name from transcript
+            from talekeeper.services.session_naming import maybe_generate_and_update_name
+            asyncio.create_task(maybe_generate_and_update_name(session_id))
+
+        except Exception as exc:
+            yield _sse_event("error", {"message": str(exc)})
+            async with get_db() as db:
+                await db.execute(
+                    "UPDATE sessions SET status = 'completed', updated_at = datetime('now') WHERE id = ?",
+                    (session_id,),
+                )
+
+    return StreamingResponse(sse_generator(), media_type="text/event-stream")
+
+
+@router.post("/api/sessions/{session_id}/process-all")
+async def process_all(session_id: int, num_speakers: int | None = Query(default=None, ge=1, le=10)) -> StreamingResponse:
+    """Run the full pipeline: transcription → diarization → summaries → image, with cleanup between phases."""
+    from talekeeper.services.transcription import (
+        transcribe_chunked,
+        TranscriptSegment,
+        ChunkProgress,
+    )
+    from talekeeper.services.resource_orchestration import (
+        cleanup_transcription,
+        cleanup_diarization,
+        cleanup_llm,
+        cleanup_image_generation,
+    )
+
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM sessions WHERE id = ?", (session_id,)
+        )
+        if not rows:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        session = dict(rows[0])
+        if not session.get("audio_path"):
+            raise HTTPException(status_code=400, detail="No audio for this session")
+
+        audio_path = Path(session["audio_path"])
+        if not audio_path.exists():
+            raise HTTPException(status_code=404, detail="Audio file not found")
+
+        language = session.get("language", "en")
+
+        model_rows = await db.execute_fetchall(
+            "SELECT value FROM settings WHERE key = 'whisper_model'"
+        )
+        model_name = model_rows[0]["value"] if model_rows and model_rows[0]["value"] else None
+
+    async def sse_generator() -> AsyncIterator[str]:
+        segments_count = 0
+        summaries_count = 0
+        image_result = None
+
+        try:
+            # ---- Phase 1: Transcription ----
+            yield _sse_event("phase", {"phase": "transcription"})
+
+            async with get_db() as db:
+                await db.execute(
+                    "DELETE FROM transcript_segments WHERE session_id = ?", (session_id,)
+                )
+                await db.execute(
+                    "DELETE FROM speakers WHERE session_id = ?", (session_id,)
+                )
+                await db.execute(
+                    "UPDATE sessions SET status = 'transcribing', updated_at = datetime('now') WHERE id = ?",
+                    (session_id,),
+                )
+
+            kwargs = {"language": language}
+            if model_name:
+                kwargs["model_name"] = model_name
+            for item in transcribe_chunked(audio_path, **kwargs):
+                if isinstance(item, ChunkProgress):
+                    yield _sse_event("progress", {
+                        "chunk": item.chunk,
+                        "total_chunks": item.total_chunks,
+                    })
+                elif isinstance(item, TranscriptSegment):
+                    async with get_db() as db:
+                        await db.execute(
+                            "INSERT INTO transcript_segments (session_id, text, start_time, end_time) VALUES (?, ?, ?, ?)",
+                            (session_id, item.text, item.start_time, item.end_time),
+                        )
+                    segments_count += 1
+
+            cleanup_transcription()
+
+            # ---- Phase 2: Diarization ----
+            yield _sse_event("phase", {"phase": "diarization"})
+
+            from talekeeper.services.diarization import run_final_diarization
+            from talekeeper.services.audio import audio_to_wav
+
+            wav_path = audio_to_wav(audio_path)
+            try:
+                await run_final_diarization(session_id, wav_path, num_speakers_override=num_speakers)
+            finally:
+                if wav_path.exists():
+                    wav_path.unlink()
+
+            cleanup_diarization()
+
+            # Mark session completed after transcription + diarization
+            async with get_db() as db:
+                await db.execute(
+                    "UPDATE sessions SET status = 'completed', updated_at = datetime('now') WHERE id = ?",
+                    (session_id,),
+                )
+
+            # ---- Phase 3: Summaries ----
+            yield _sse_event("phase", {"phase": "summaries"})
+
+            from talekeeper.services import llm_client
+            from talekeeper.services.summarization import (
+                format_transcript,
+                generate_full_summary,
+                generate_pov_summary,
+            )
+
+            llm_config = await llm_client.resolve_config()
+            base_url = llm_config["base_url"]
+            api_key = llm_config["api_key"]
+            llm_model = llm_config["model"]
+
+            async with get_db() as db:
+                segments = await db.execute_fetchall(
+                    """SELECT ts.text, ts.start_time, ts.end_time,
+                              sp.diarization_label, sp.player_name, sp.character_name
+                       FROM transcript_segments ts
+                       LEFT JOIN speakers sp ON sp.id = ts.speaker_id
+                       WHERE ts.session_id = ?
+                       ORDER BY ts.start_time""",
+                    (session_id,),
+                )
+
+            if segments:
+                transcript_text = format_transcript([dict(s) for s in segments])
+
+                # Generate full summary
+                full_content = await generate_full_summary(
+                    transcript_text, base_url=base_url, api_key=api_key, model=llm_model,
+                )
+                async with get_db() as db:
+                    await db.execute(
+                        "INSERT INTO summaries (session_id, type, content, model_used) VALUES (?, 'full', ?, ?)",
+                        (session_id, full_content, llm_model),
+                    )
+                summaries_count += 1
+
+                # Generate POV summaries for named speakers
+                async with get_db() as db:
+                    speakers = await db.execute_fetchall(
+                        "SELECT * FROM speakers WHERE session_id = ? AND character_name IS NOT NULL",
+                        (session_id,),
+                    )
+
+                for speaker in speakers:
+                    sp = dict(speaker)
+                    pov_content = await generate_pov_summary(
+                        transcript_text,
+                        character_name=sp["character_name"],
+                        base_url=base_url,
+                        api_key=api_key,
+                        model=llm_model,
+                    )
+                    async with get_db() as db:
+                        await db.execute(
+                            "INSERT INTO summaries (session_id, type, speaker_id, content, model_used) VALUES (?, 'pov', ?, ?, ?)",
+                            (session_id, sp["id"], pov_content, llm_model),
+                        )
+                    summaries_count += 1
+
+            await cleanup_llm(base_url, api_key, llm_model)
+
+            # ---- Phase 4: Image Generation ----
+            yield _sse_event("phase", {"phase": "image_generation"})
+
+            from talekeeper.services.image_generation import (
+                craft_scene_description,
+                generate_session_image,
+            )
+
+            # Use the full summary for scene crafting if available
+            scene_content = full_content if segments else None
+            if scene_content:
+                scene_desc = await craft_scene_description(
+                    scene_content,
+                    base_url=base_url,
+                    api_key=api_key,
+                    model=llm_model,
+                    session_id=session_id,
+                )
+                image_result = await generate_session_image(
+                    session_id, scene_desc, scene_desc,
+                )
+
+            cleanup_image_generation()
+
+            # ---- Done ----
+            yield _sse_event("done", {
+                "segments_count": segments_count,
+                "summaries_count": summaries_count,
+                "image": image_result,
+            })
+
+            # Fire-and-forget: generate session name
             from talekeeper.services.session_naming import maybe_generate_and_update_name
             asyncio.create_task(maybe_generate_and_update_name(session_id))
 

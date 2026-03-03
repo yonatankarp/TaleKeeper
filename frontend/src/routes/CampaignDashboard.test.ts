@@ -21,7 +21,7 @@ vi.mock('../lib/router.svelte', () => ({
 import { api } from '../lib/api';
 import { navigate } from '../lib/router.svelte';
 
-const mockCampaign = { id: 1, name: 'Test Campaign', description: 'A test', language: 'en', num_speakers: 5, session_start_number: 0 };
+const mockCampaign = { id: 1, name: 'Test Campaign', description: 'A test', language: 'en', num_speakers: 5, session_start_number: 0, similarity_threshold: 0.65 };
 const mockSessions = [
   { id: 10, name: 'Session 1', date: '2025-01-01', status: 'completed', audio_path: '/audio.wav', session_number: 1, transcript_count: 5, summary_count: 1, image_count: 2 },
   { id: 11, name: 'Session 2', date: '2025-01-08', status: 'draft', audio_path: null, session_number: 2, transcript_count: 0, summary_count: 0, image_count: 0 },
@@ -223,5 +223,28 @@ describe('CampaignDashboard', () => {
     render(CampaignDashboard, { props: { campaignId: 1 } });
     await flush();
     expect(screen.getByText('Start First Session')).toBeInTheDocument();
+  });
+
+  it('shows Voice Signature Confidence slider in settings panel', async () => {
+    setupMocks();
+    render(CampaignDashboard, { props: { campaignId: 1 } });
+    await flush();
+    await fireEvent.click(screen.getByText('Settings'));
+    await flush();
+    expect(screen.getByText(/Voice Signature Confidence/)).toBeInTheDocument();
+  });
+
+  it('saves similarity_threshold when campaign settings are saved', async () => {
+    setupMocks();
+    vi.mocked(api.put).mockResolvedValue({});
+    render(CampaignDashboard, { props: { campaignId: 1 } });
+    await flush();
+    await fireEvent.click(screen.getByText('Settings'));
+    await flush();
+    await fireEvent.click(screen.getByText('Save'));
+    await flush();
+    expect(api.put).toHaveBeenCalledWith('/campaigns/1', expect.objectContaining({
+      similarity_threshold: 0.65,
+    }));
   });
 });

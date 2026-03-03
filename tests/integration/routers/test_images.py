@@ -2,7 +2,7 @@
 
 import pytest
 from httpx import AsyncClient
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 
 from talekeeper.db import get_db
 from conftest import parse_sse_events
@@ -138,18 +138,11 @@ async def test_delete_image(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 @patch(
-    "talekeeper.services.image_client.resolve_config",
-    new_callable=AsyncMock,
-    return_value={"base_url": "http://test-image", "api_key": None, "model": "test-img"},
-)
-@patch(
-    "talekeeper.services.image_client.health_check",
-    new_callable=AsyncMock,
-    return_value={"status": "ok"},
+    "talekeeper.routers.images.image_health_check",
+    return_value={"status": "ok", "engine": "mflux"},
 )
 async def test_image_health(
-    mock_health: AsyncMock,
-    mock_config: AsyncMock,
+    mock_health,
     client: AsyncClient,
 ) -> None:
     """GET /api/settings/image-health returns the health check result."""
@@ -157,7 +150,6 @@ async def test_image_health(
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "ok"
-    mock_config.assert_called_once()
     mock_health.assert_called_once()
 
 
@@ -201,14 +193,8 @@ async def test_craft_scene(
 
 @pytest.mark.asyncio
 @patch(
-    "talekeeper.routers.images.image_client.resolve_config",
-    new_callable=AsyncMock,
-    return_value={"base_url": "http://img", "api_key": None, "model": "img-model"},
-)
-@patch(
-    "talekeeper.routers.images.image_client.health_check",
-    new_callable=AsyncMock,
-    return_value={"status": "ok"},
+    "talekeeper.routers.images.image_health_check",
+    return_value={"status": "ok", "engine": "mflux"},
 )
 @patch(
     "talekeeper.routers.images.generate_session_image",
@@ -219,11 +205,12 @@ async def test_craft_scene(
     "talekeeper.routers.images.craft_scene_description",
     new_callable=AsyncMock,
 )
+@patch("talekeeper.services.resource_orchestration.cleanup_image_generation")
 async def test_generate_image_with_prompt(
+    mock_cleanup_img: MagicMock,
     mock_craft: AsyncMock,
     mock_gen_image: AsyncMock,
-    mock_img_health: AsyncMock,
-    mock_img_config: AsyncMock,
+    mock_img_health,
     client: AsyncClient,
 ) -> None:
     """POST /api/sessions/{id}/generate-image with explicit prompt skips crafting."""
@@ -251,6 +238,7 @@ async def test_generate_image_with_prompt(
     # craft_scene_description must NOT have been called
     mock_craft.assert_not_called()
     mock_gen_image.assert_called_once()
+    mock_cleanup_img.assert_called_once()
 
     # Verify the done event carries image metadata
     done_events = [e for e in events if e["event"] == "done"]
@@ -260,22 +248,16 @@ async def test_generate_image_with_prompt(
 
 @pytest.mark.asyncio
 @patch(
-    "talekeeper.routers.images.image_client.resolve_config",
-    new_callable=AsyncMock,
-    return_value={"base_url": "http://img", "api_key": None, "model": "img-model"},
+    "talekeeper.routers.images.image_health_check",
+    return_value={"status": "ok", "engine": "mflux"},
 )
 @patch(
-    "talekeeper.routers.images.image_client.health_check",
-    new_callable=AsyncMock,
-    return_value={"status": "ok"},
-)
-@patch(
-    "talekeeper.routers.images.llm_client.resolve_config",
+    "talekeeper.services.llm_client.resolve_config",
     new_callable=AsyncMock,
     return_value={"base_url": "http://llm", "api_key": None, "model": "llm-model"},
 )
 @patch(
-    "talekeeper.routers.images.llm_client.health_check",
+    "talekeeper.services.llm_client.health_check",
     new_callable=AsyncMock,
     return_value={"status": "ok"},
 )
@@ -289,13 +271,14 @@ async def test_generate_image_with_prompt(
     new_callable=AsyncMock,
     return_value={"id": 2, "file_path": "/tmp/gen2.png", "prompt": "A dragon swoops over a burning village."},
 )
+@patch("talekeeper.services.resource_orchestration.cleanup_image_generation")
 async def test_generate_image_crafts_scene(
+    mock_cleanup_img: MagicMock,
     mock_gen_image: AsyncMock,
     mock_craft: AsyncMock,
     mock_llm_health: AsyncMock,
     mock_llm_config: AsyncMock,
-    mock_img_health: AsyncMock,
-    mock_img_config: AsyncMock,
+    mock_img_health,
     client: AsyncClient,
 ) -> None:
     """POST /api/sessions/{id}/generate-image without prompt crafts scene first."""
@@ -321,6 +304,7 @@ async def test_generate_image_crafts_scene(
 
     mock_craft.assert_called_once()
     mock_gen_image.assert_called_once()
+    mock_cleanup_img.assert_called_once()
 
 
 @pytest.mark.asyncio

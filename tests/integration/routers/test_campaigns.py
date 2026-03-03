@@ -72,6 +72,49 @@ async def test_delete_campaign(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_campaign_returns_similarity_threshold(client: AsyncClient) -> None:
+    """GET /api/campaigns/{id} includes similarity_threshold with default value."""
+    create_resp = await client.post("/api/campaigns", json={"name": "Threshold Test"})
+    campaign_id = create_resp.json()["id"]
+
+    resp = await client.get(f"/api/campaigns/{campaign_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "similarity_threshold" in data
+    assert data["similarity_threshold"] == 0.65
+
+
+@pytest.mark.asyncio
+async def test_update_campaign_similarity_threshold(client: AsyncClient) -> None:
+    """PUT /api/campaigns/{id} can update similarity_threshold."""
+    create_resp = await client.post("/api/campaigns", json={"name": "Threshold Update"})
+    campaign_id = create_resp.json()["id"]
+
+    resp = await client.put(
+        f"/api/campaigns/{campaign_id}", json={"similarity_threshold": 0.85}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["similarity_threshold"] == 0.85
+
+    # Verify it persists
+    get_resp = await client.get(f"/api/campaigns/{campaign_id}")
+    assert get_resp.json()["similarity_threshold"] == 0.85
+
+
+@pytest.mark.asyncio
+async def test_update_campaign_similarity_threshold_validation(client: AsyncClient) -> None:
+    """PUT /api/campaigns/{id} rejects out-of-range similarity_threshold."""
+    create_resp = await client.post("/api/campaigns", json={"name": "Threshold Validate"})
+    campaign_id = create_resp.json()["id"]
+
+    # Value above 1.0 should be rejected
+    resp = await client.put(
+        f"/api/campaigns/{campaign_id}", json={"similarity_threshold": 1.5}
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_campaign_dashboard(client: AsyncClient) -> None:
     create_resp = await client.post("/api/campaigns", json={"name": "Dashboard Test"})
     campaign_id = create_resp.json()["id"]
