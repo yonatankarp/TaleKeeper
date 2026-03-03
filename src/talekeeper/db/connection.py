@@ -32,6 +32,9 @@ async def _apply_schema(db: aiosqlite.Connection) -> None:
     await _migrate_add_session_number_column(db)
     await _migrate_add_session_start_number_column(db)
     await _migrate_backfill_session_numbers(db)
+    await _migrate_invalidate_voice_signatures(db)
+    await _migrate_add_similarity_threshold(db)
+    await _migrate_add_mlx_settings(db)
 
 
 async def _migrate_add_session_number_column(db: aiosqlite.Connection) -> None:
@@ -167,6 +170,44 @@ async def _migrate_add_roster_description(db: aiosqlite.Connection) -> None:
         )
 
 
+async def _migrate_invalidate_voice_signatures(db: aiosqlite.Connection) -> None:
+    """Invalidate all voice signatures — pyannote embeddings are incompatible with speechbrain."""
+    # Use a settings flag to ensure this only runs once
+    row = await db.execute_fetchall(
+        "SELECT value FROM settings WHERE key = '_migration_voice_sigs_invalidated'"
+    )
+    if not row:
+        await db.execute("DELETE FROM voice_signatures")
+        await db.execute(
+            "INSERT INTO settings (key, value) VALUES ('_migration_voice_sigs_invalidated', '1')"
+        )
+
+
+async def _migrate_add_similarity_threshold(db: aiosqlite.Connection) -> None:
+    """Add similarity_threshold column to campaigns for configurable voice matching."""
+    cols = await db.execute_fetchall("PRAGMA table_info(campaigns)")
+    col_names = [c["name"] for c in cols]
+    if "similarity_threshold" not in col_names:
+        await db.execute(
+            "ALTER TABLE campaigns ADD COLUMN similarity_threshold REAL DEFAULT 0.65"
+        )
+
+
+async def _migrate_add_mlx_settings(db: aiosqlite.Connection) -> None:
+    """Insert default settings rows for MLX pipeline configuration."""
+    defaults = {
+        "hf_token": "",
+        "whisper_batch_size": "",
+        "image_steps": "4",
+        "image_guidance_scale": "0",
+    }
+    for key, value in defaults.items():
+        await db.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+
+
 @asynccontextmanager
 async def get_db() -> AsyncIterator[aiosqlite.Connection]:
     """Yield an async database connection."""
@@ -187,6 +228,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
     language TEXT NOT NULL DEFAULT 'en',
     num_speakers INTEGER NOT NULL DEFAULT 5,
     session_start_number INTEGER NOT NULL DEFAULT 0,
+    similarity_threshold REAL DEFAULT 0.65,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

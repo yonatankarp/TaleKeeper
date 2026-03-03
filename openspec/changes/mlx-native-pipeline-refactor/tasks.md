@@ -7,10 +7,10 @@
 
 ## 2. Database Migrations
 
-- [ ] 2.1 Add migration in `db/connection.py`: `DELETE FROM voice_signatures` to invalidate all existing signatures
-- [ ] 2.2 Add migration in `db/connection.py`: `ALTER TABLE campaigns ADD COLUMN similarity_threshold REAL DEFAULT 0.65`
-- [ ] 2.3 Add migration in `db/connection.py`: insert default settings rows for `hf_token`, `whisper_batch_size`, `image_steps`, `image_guidance_scale`
-- [ ] 2.4 Verify migrations run cleanly on a fresh DB and on an existing DB with data
+- [x] 2.1 Add migration in `db/connection.py`: `DELETE FROM voice_signatures` to invalidate all existing signatures
+- [x] 2.2 Add migration in `db/connection.py`: `ALTER TABLE campaigns ADD COLUMN similarity_threshold REAL DEFAULT 0.65`
+- [x] 2.3 Add migration in `db/connection.py`: insert default settings rows for `hf_token`, `whisper_batch_size`, `image_steps`, `image_guidance_scale`
+- [x] 2.4 Verify migrations run cleanly on a fresh DB and on an existing DB with data
 
 ## 3. LLM Client — Ollama Detection
 

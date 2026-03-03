@@ -36,6 +36,7 @@ EXPECTED_TABLES: dict[str, list[tuple[str, str]]] = {
         ("language", "TEXT"),
         ("num_speakers", "INTEGER"),
         ("session_start_number", "INTEGER"),
+        ("similarity_threshold", "REAL"),
         ("created_at", "TEXT"),
         ("updated_at", "TEXT"),
     ],
