@@ -6,7 +6,7 @@ Before TaleKeeper can chronicle your adventures, you'll need a few things in pla
 
 ### Prerequisites
 
-- **Python 3.11+** — [python.org](https://www.python.org/downloads/)
+- **Python 3.12+** — [python.org](https://www.python.org/downloads/)
 - **ffmpeg** — Required for audio processing
 - **Ollama** *(optional)* — For AI summaries and image generation
 
