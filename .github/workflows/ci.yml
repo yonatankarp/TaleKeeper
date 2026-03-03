@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  pull-requests: write
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -44,7 +48,16 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Run tests
-        run: python -m pytest -v --cov --cov-report=term-missing
+        run: python -m pytest -v --cov --cov-report=term-missing --junitxml=pytest.xml --cov-report=xml:coverage.xml
+
+      - name: Coverage comment
+        if: github.event_name == 'pull_request'
+        uses: MishaKav/pytest-coverage-comment@main
+        with:
+          pytest-xml-coverage-path: coverage.xml
+          junitxml-path: pytest.xml
+          title: Backend Coverage
+          unique-id-for-comment: backend
 
   frontend:
     runs-on: ubuntu-latest
@@ -67,4 +80,11 @@ jobs:
         run: npm run check
 
       - name: Run tests
-        run: npm run test
+        run: npx vitest run --coverage.reporter=json-summary --coverage.reporter=json
+
+      - name: Coverage comment
+        if: github.event_name == 'pull_request'
+        uses: davelosert/vitest-coverage-report-action@v2
+        with:
+          working-directory: frontend
+          name: Frontend Coverage
