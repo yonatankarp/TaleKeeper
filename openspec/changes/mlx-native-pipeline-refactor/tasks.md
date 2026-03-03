@@ -37,18 +37,18 @@
 
 ## 5. Diarization Service Rewrite
 
-- [ ] 5.1 Rewrite `services/diarization.py`: remove all speechbrain imports, compatibility shims, and ECAPA-TDNN encoder code
-- [ ] 5.2 Implement pyannote pipeline loading with HF token resolution (settings table → `HF_TOKEN` env var) and MPS device targeting
-- [ ] 5.3 Implement `diarize()` using pyannote pipeline: load WAV, run pipeline with optional `num_speakers`, extract `SpeakerSegment` list from `Annotation` result
-- [ ] 5.4 Implement `extract_speaker_embedding()` using pyannote's embedding model (`pyannote/embedding`): extract 192-dim embeddings from time ranges, average, L2-normalize
-- [ ] 5.5 Rewrite `diarize_with_signatures()` to use pyannote embeddings for cosine similarity matching, reading `similarity_threshold` from campaign settings
-- [ ] 5.6 Update `run_final_diarization()` to use new pyannote-based `diarize()` and `diarize_with_signatures()`, passing campaign `similarity_threshold`
-- [ ] 5.7 Update `generate_voice_signatures()` to use new `extract_speaker_embedding()` with pyannote model
-- [ ] 5.8 Keep `align_speakers_with_transcript()` and `_merge_segments()` unchanged (they are engine-agnostic)
-- [ ] 5.9 Add `unload_models()` function to `services/diarization.py` that deletes cached pipeline + embedding model and calls `torch.mps.empty_cache()`
-- [ ] 5.10 Write unit tests for pyannote diarization (mock pyannote Pipeline, verify segment extraction)
-- [ ] 5.11 Write unit tests for signature matching with configurable threshold
-- [ ] 5.12 Write unit tests for HF token resolution (settings → env var → missing error)
+- [x] 5.1 Rewrite `services/diarization.py`: remove all speechbrain imports, compatibility shims, and ECAPA-TDNN encoder code
+- [x] 5.2 Implement pyannote pipeline loading with HF token resolution (settings table → `HF_TOKEN` env var) and MPS device targeting
+- [x] 5.3 Implement `diarize()` using pyannote pipeline: load WAV, run pipeline with optional `num_speakers`, extract `SpeakerSegment` list from `Annotation` result
+- [x] 5.4 Implement `extract_speaker_embedding()` using pyannote's embedding model (`pyannote/embedding`): extract 192-dim embeddings from time ranges, average, L2-normalize
+- [x] 5.5 Rewrite `diarize_with_signatures()` to use pyannote embeddings for cosine similarity matching, reading `similarity_threshold` from campaign settings
+- [x] 5.6 Update `run_final_diarization()` to use new pyannote-based `diarize()` and `diarize_with_signatures()`, passing campaign `similarity_threshold`
+- [x] 5.7 Update `generate_voice_signatures()` to use new `extract_speaker_embedding()` with pyannote model
+- [x] 5.8 Keep `align_speakers_with_transcript()` and `_merge_segments()` unchanged (they are engine-agnostic)
+- [x] 5.9 Add `unload_models()` function to `services/diarization.py` that deletes cached pipeline + embedding model and calls `torch.mps.empty_cache()`
+- [x] 5.10 Write unit tests for pyannote diarization (mock pyannote Pipeline, verify segment extraction)
+- [x] 5.11 Write unit tests for signature matching with configurable threshold
+- [x] 5.12 Write unit tests for HF token resolution (settings → env var → missing error)
 
 ## 6. Image Generation Service Rewrite
 
