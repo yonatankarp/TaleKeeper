@@ -25,31 +25,22 @@ TaleKeeper captures audio from your game table, transcribes speech on-device usi
 git clone <repo-url> && cd TaleKeeper
 
 # Create a virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv venv
+source venv/bin/activate
 
-# Install the Python package in editable mode
-pip install -e .
+# Install all dependencies (backend + frontend)
+make install
 ```
 
-### 2. Build the frontend
+### 2. Build and run
 
 ```bash
-cd frontend
-npm install
-npm run build
-cd ..
+make serve
 ```
 
-This compiles the Svelte app into `src/talekeeper/static/`, which FastAPI serves automatically.
+This builds the frontend, then starts the server at `http://127.0.0.1:8000` and opens your browser.
 
-### 3. Run
-
-```bash
-talekeeper serve
-```
-
-This starts the server at `http://127.0.0.1:8000` and opens your browser.
+Run `make help` to see all available targets.
 
 ### 4. (Optional) Set up Ollama for summaries
 
@@ -106,13 +97,23 @@ Run the backend and frontend dev servers in separate terminals:
 
 ```bash
 # Terminal 1 — backend with auto-reload
-talekeeper serve --reload --no-browser
+make dev
 
 # Terminal 2 — frontend with hot-reload
 cd frontend && npm run dev
 ```
 
 The Vite dev server (port 5173) proxies `/api` and `/ws` requests to the FastAPI backend (port 8000).
+
+### Testing
+
+```bash
+make test           # run all tests (backend + frontend)
+make test-backend   # backend only (pytest)
+make test-frontend  # frontend only (vitest)
+make coverage       # backend tests with coverage
+make check          # frontend type checking (svelte-check)
+```
 
 ## CLI Options
 
@@ -160,28 +161,15 @@ Back up this folder to preserve your recordings and transcripts.
 
 TaleKeeper uses [Zensical](https://zensical.org/) for its documentation site.
 
-To serve the docs locally using the project venv:
-
 ```bash
-.venv/bin/pip install -e ".[docs]"
-.venv/bin/zensical serve
+# Install docs dependencies (one-time)
+venv/bin/pip install -e ".[docs]"
+
+# Build and serve docs locally
+make docs
 ```
 
-This starts a local server at `http://127.0.0.1:8000` with live-reload — edits to files in `docs/guide/` are reflected immediately.
-
-To build a static copy:
-
-```bash
-.venv/bin/zensical build
-```
-
-The generated site is written to `site/`. To serve the built site locally:
-
-```bash
-python3 -m http.server -d site 8080
-```
-
-Then open `http://127.0.0.1:8080` in your browser.
+This builds the docs and serves them at `http://127.0.0.1:8080`. Use `make docs-build` to build without serving.
 
 ## Hardware Notes
 

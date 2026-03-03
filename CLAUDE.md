@@ -13,19 +13,33 @@ D&D session recording, transcription, and summarization app. FastAPI backend + S
 
 ## Commands
 
-### Backend
+### Make targets (primary interface)
+- `make help` — show all available targets
+- `make install` — install backend and frontend dependencies
+- `make serve` — build frontend and start server (`ARGS="--reload"` to pass flags)
+- `make dev` — start backend in reload mode (no frontend build)
+- `make build` — build the frontend
+- `make test` — run all tests (backend + frontend)
+- `make test-backend` — run backend tests (pytest)
+- `make test-frontend` — run frontend tests (vitest)
+- `make coverage` — run backend tests with coverage
+- `make check` — run frontend type checking (svelte-check)
+- `make docs` — build and serve documentation locally
+- `make docs-build` — build documentation with zensical
+- `make screenshots` — capture screenshots for the user guide
+- `make clean` — remove build artifacts
+
+### Direct commands (secondary reference)
 - Run server: `venv/bin/python -m talekeeper serve --reload --no-browser`
 - Run all tests: `venv/bin/python -m pytest`
 - Run unit tests: `venv/bin/python -m pytest tests/unit`
 - Run integration tests: `venv/bin/python -m pytest tests/integration`
 - Run tests with coverage: `venv/bin/python -m pytest -v --cov`
 - Install deps: `venv/bin/pip install -e ".[dev]"`
-
-### Frontend
-- Dev server: `cd frontend && npm run dev`
-- Build: `cd frontend && npm run build`
-- Type check: `cd frontend && npm run check`
-- Run tests: `cd frontend && npm run test`
+- Frontend dev server: `cd frontend && npm run dev`
+- Frontend build: `cd frontend && npm run build`
+- Frontend type check: `cd frontend && npm run check`
+- Frontend tests: `cd frontend && npm run test`
 
 ## Architecture
 
