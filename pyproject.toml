@@ -35,8 +35,7 @@ dev = [
     "httpx>=0.28",
 ]
 docs = [
-    "mkdocs>=1.6",
-    "mkdocs-material>=9.5",
+    "zensical>=0.0.24",
 ]
 
 [tool.pytest.ini_options]
