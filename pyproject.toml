@@ -7,7 +7,7 @@ name = "talekeeper"
 version = "0.1.0"
 description = "Record, transcribe, and summarize D&D sessions — entirely offline"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
     "fastapi>=0.115",
