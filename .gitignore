@@ -32,5 +32,12 @@ data/
 # MkDocs build output
 site/
 
+# ML model weights
+frontend/mlx_models/
+*.npz
+*.bin
+*.safetensors
+*.gguf
+
 # Worktrees
 .worktrees/
