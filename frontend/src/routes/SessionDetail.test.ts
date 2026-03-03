@@ -19,7 +19,7 @@ vi.mock('../lib/api', () => ({
 
 import { api } from '../lib/api';
 
-const mockSession = {
+const mockSession: { id: number; campaign_id: number; name: string; date: string; status: string; audio_path: string | null; language: string; session_number: number } = {
   id: 1,
   campaign_id: 10,
   name: 'Dragon Siege',
