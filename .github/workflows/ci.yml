@@ -80,7 +80,7 @@ jobs:
         run: npm run check
 
       - name: Run tests
-        run: npx vitest run --coverage.reporter=json-summary --coverage.reporter=json
+        run: npx vitest run --coverage --coverage.reporter=json-summary --coverage.reporter=json
 
       - name: Coverage comment
         if: github.event_name == 'pull_request'
