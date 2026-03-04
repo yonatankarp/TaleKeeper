@@ -146,15 +146,16 @@ def test_get_model_caching():
     mod._model = None
     mod._model_name = None
 
-    with patch("lightning_whisper_mlx.LightningWhisperMLX") as MockLWM:
-        mock_instance = MagicMock()
-        MockLWM.return_value = mock_instance
+    mock_instance = MagicMock()
+    fake_lwm = MagicMock()
+    fake_lwm.LightningWhisperMLX.return_value = mock_instance
 
+    with patch.dict("sys.modules", {"lightning_whisper_mlx": fake_lwm}):
         m1 = mod.get_model("test-model", batch_size=8)
         m2 = mod.get_model("test-model", batch_size=8)
 
         assert m1 is m2
-        MockLWM.assert_called_once()
+        fake_lwm.LightningWhisperMLX.assert_called_once()
 
     mod._model = None
     mod._model_name = None

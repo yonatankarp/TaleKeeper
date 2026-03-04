@@ -1,5 +1,7 @@
 """Tests for the scene description and image generation pipeline (mflux)."""
 
+import sys
+
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 from pathlib import Path
@@ -107,7 +109,9 @@ async def test_generate_session_image(mock_dir, mock_get_model, mock_config, db,
 
 def test_health_check_ok():
     """health_check returns ok when mflux is importable."""
-    result = health_check()
+    fake_module = MagicMock()
+    with patch.dict("sys.modules", {"mflux": fake_module, "mflux.models": fake_module, "mflux.models.flux2": fake_module, "mflux.models.flux2.variants": fake_module, "mflux.models.flux2.variants.txt2img": fake_module, "mflux.models.flux2.variants.txt2img.flux2_klein": fake_module}):
+        result = health_check()
     assert result["status"] == "ok"
     assert result["engine"] == "mflux"
 
