@@ -7,11 +7,11 @@ Enable per-speaker voice profile storage and matching at the campaign level, all
 ## Requirements
 
 ### Requirement: Voice signature extraction from labeled sessions
-The system SHALL extract voice signatures from sessions where speakers have been manually assigned to campaign roster entries. For each roster-linked speaker, the system SHALL compute an averaged, L2-normalized 256-dimensional embedding from all transcript segments assigned to that speaker using the WeSpeaker ResNet34-LM model via ONNX Runtime. The extraction SHALL use VAD to identify speech segments, extract windowed embeddings (1.2s windows, 0.6s step), filter to subsegments overlapping the speaker's transcript time ranges, and average the results.
+The system SHALL extract voice signatures from sessions where speakers have been manually assigned to campaign roster entries. For each roster-linked speaker, the system SHALL compute an averaged, L2-normalized 192-dimensional embedding from all transcript segments assigned to that speaker using pyannote's embedding model (`pyannote/embedding`).
 
 #### Scenario: Extract signatures from a fully labeled session
 - **WHEN** a session has audio, transcript segments, and at least one speaker assigned to a roster entry, and the user triggers "Generate Voice Signatures"
-- **THEN** the system runs VAD on the audio, extracts 256-dim WeSpeaker embeddings from subsegments overlapping each labeled speaker's transcript ranges, averages them into one embedding per speaker, L2-normalizes it, and stores it as a voice signature linked to the roster entry
+- **THEN** the system extracts embeddings from each labeled speaker's segments using pyannote's embedding model, averages them into one 192-dim embedding per speaker, normalizes it, and stores it as a voice signature linked to the roster entry
 
 #### Scenario: Partial labeling
 - **WHEN** a session has 4 detected speakers but only 2 are assigned to roster entries
@@ -33,23 +33,19 @@ The system SHALL store voice signatures at the campaign level, linked to roster 
 - **THEN** the associated voice signature is also deleted (CASCADE)
 
 ### Requirement: Signature-based speaker matching during diarization
-The system SHALL use stored voice signatures as a post-clustering identification method when signatures exist for the session's campaign. The system SHALL first run the full diarize pipeline (VAD → embeddings → spectral clustering) to produce speaker clusters, then compute an L2-normalized centroid embedding for each cluster, then compare each centroid against all campaign voice signatures using cosine similarity. A speaker cluster SHALL be matched to the closest signature above the campaign's `similarity_threshold` (default 0.75 for new campaigns). Unmatched clusters SHALL be labeled "Unknown Speaker".
+The system SHALL use stored voice signatures as the primary speaker identification method when signatures exist for the session's campaign. For each audio segment, the system SHALL compute cosine similarity against all campaign signatures and assign the segment to the closest matching speaker above the campaign's configured similarity threshold.
 
 #### Scenario: Diarization with signatures available
 - **WHEN** a session is diarized and the campaign has voice signatures for 4 roster entries
-- **THEN** the system runs the full diarize pipeline, computes per-cluster centroids, compares each centroid against all 4 signatures, and assigns matched roster entry names to clusters above the similarity threshold
+- **THEN** each audio segment is compared against all 4 signatures and assigned to the best match above the campaign's similarity threshold
 
 #### Scenario: Audio window below similarity threshold
-- **WHEN** a speaker cluster's centroid has a highest cosine similarity below the campaign's similarity threshold to any stored signature
-- **THEN** that cluster is labeled "Unknown Speaker"
+- **WHEN** an audio segment's highest cosine similarity to any stored signature is below the campaign's configured similarity threshold
+- **THEN** that segment is labeled as "Unknown Speaker"
 
 #### Scenario: Fallback to clustering when no signatures exist
 - **WHEN** a session is diarized and the campaign has no voice signatures
-- **THEN** the system uses unsupervised spectral clustering only
-
-#### Scenario: Default similarity threshold for new campaigns
-- **WHEN** a new campaign is created
-- **THEN** its similarity_threshold defaults to 0.75
+- **THEN** the system falls back to pyannote's built-in clustering
 
 ### Requirement: Voice signature management API
 The system SHALL provide API endpoints to generate voice signatures from a session and to list existing signatures for a campaign.
@@ -81,9 +77,29 @@ The system SHALL display a "Generate Voice Signatures" button in the speaker pan
 - **WHEN** the speaker panel is displayed for a session in a campaign with voice signatures
 - **THEN** each speaker linked to a roster entry with a signature shows a visual indicator (e.g., icon or badge) confirming a voice signature exists
 
-### Requirement: No HuggingFace token required for voice signature extraction
-The system SHALL NOT require a HuggingFace token for extracting voice signatures. The WeSpeaker ResNet34-LM model SHALL download automatically via ONNX Runtime without authentication.
+### Requirement: Automatic signature invalidation on engine upgrade
+The system SHALL automatically delete all voice signature data from the database when the embedding model changes in a way that makes existing embeddings incompatible. The invalidation SHALL run as a database migration during application startup.
 
-#### Scenario: Voice signature generation without HF token
-- **WHEN** the user generates voice signatures and no HuggingFace token is configured
-- **THEN** voice signature extraction completes successfully using the auto-downloaded WeSpeaker model
+#### Scenario: Signatures cleared on upgrade
+- **WHEN** the application starts after upgrading from speechbrain to pyannote embeddings
+- **THEN** all rows in the `voice_signatures` table are deleted
+- **AND** users must re-enroll their players by generating new voice signatures
+
+#### Scenario: UI indicates re-enrollment needed
+- **WHEN** a campaign previously had voice signatures that were invalidated
+- **THEN** the voice signature status indicators show that no signatures exist, prompting re-enrollment
+
+### Requirement: Configurable similarity threshold
+The system SHALL allow the DM to configure the cosine similarity threshold for voice signature matching on a per-campaign basis. The threshold SHALL be stored as a column on the `campaigns` table with a default value. The threshold SHALL be used by the `diarize_with_signatures` function instead of a hardcoded constant.
+
+#### Scenario: Default threshold applied
+- **WHEN** a campaign has no custom similarity threshold configured
+- **THEN** voice signature matching uses the default threshold value
+
+#### Scenario: Custom threshold per campaign
+- **WHEN** the DM sets the similarity threshold to 0.8 for a specific campaign
+- **THEN** voice signature matching for that campaign uses 0.8, while other campaigns use their own configured threshold
+
+#### Scenario: Threshold editable in campaign settings
+- **WHEN** the DM opens campaign settings
+- **THEN** a "Voice Signature Confidence" slider or input field is available to adjust the similarity threshold

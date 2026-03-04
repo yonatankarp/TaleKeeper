@@ -42,25 +42,6 @@ The system SHALL concatenate all chunk files into a single `.webm` file at `data
 - **WHEN** the application starts
 - **THEN** any `tmp_*` directories under `data/audio/` are deleted
 
-### Requirement: Incremental-only live transcription
-
-The system SHALL transcribe only the new chunks received since the last transcription cycle (every ~10 chunks), not the entire accumulated audio. Transcript segment timestamps SHALL be adjusted by a running time offset so they reflect the correct position in the full recording.
-
-#### Scenario: Only new chunks are transcribed
-- **WHEN** the transcription interval fires (every 10 chunks)
-- **THEN** only the chunk files written since the last transcription are concatenated, converted to WAV, and transcribed
-- **AND** the full accumulated buffer is NOT re-processed
-
-#### Scenario: Timestamps are offset-adjusted
-- **WHEN** a new chunk batch is transcribed
-- **THEN** the resulting segment timestamps are adjusted by adding the cumulative duration of all previously transcribed chunks
-- **AND** the cumulative offset is advanced by the duration of the current chunk batch
-
-#### Scenario: Transcription results are streamed back and persisted
-- **WHEN** incremental transcription produces segments
-- **THEN** each segment is sent to the client via the WebSocket as a `{"type": "transcript"}` message
-- **AND** each segment is persisted to the `transcript_segments` table
-
 ### Requirement: Audio file splitting for retranscription
 
 The system SHALL provide a function to split a stored audio file into overlapping segments of 5 minutes with 30-second overlap on each side. Each segment SHALL be exported as a temporary WAV file (16kHz mono). Only one segment SHALL be held in memory at a time.

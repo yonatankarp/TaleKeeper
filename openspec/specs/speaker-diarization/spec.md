@@ -2,24 +2,20 @@
 
 ## Purpose
 
-Provide automatic speaker detection and identification using a three-stage pipeline (Silero VAD, WeSpeaker embeddings, spectral clustering), aligning speakers with transcript segments, supporting real-time provisional labels during recording, and enabling manual speaker name assignment and correction.
+Provide automatic speaker detection and identification using pyannote.audio's speaker diarization pipeline running on Apple GPU via MPS, aligning speakers with transcript segments, and enabling manual speaker name assignment and correction.
 
 ## Requirements
 
 ### Requirement: Automatic speaker detection
-The system SHALL automatically detect and distinguish different speakers in the audio using a three-stage pipeline: voice activity detection (Silero VAD), speaker embedding extraction (WeSpeaker ResNet34-LM via ONNX Runtime, 256-dim), and spectral clustering. When voice signatures exist for the session's campaign, the system SHALL run the full pipeline first, then match resulting speaker clusters against stored signatures using cosine similarity. When no signatures exist, the system SHALL use unsupervised spectral clustering. The system SHALL accept `num_speakers` as a direct clustering input that determines the exact number of clusters (not a post-hoc constraint). The system SHALL also accept `min_speakers` and `max_speakers` bounds for automatic speaker count estimation via GMM+BIC. Each detected speaker MUST be assigned a provisional label (e.g., "Player 1", "Player 2") or matched to a known roster entry name.
+The system SHALL automatically detect and distinguish different speakers in the audio using pyannote.audio's speaker diarization pipeline running on the Apple GPU via MPS. When voice signatures exist for the session's campaign, the system SHALL use signature-based nearest-neighbor matching as the primary identification method. When no signatures exist, the system SHALL use pyannote's built-in clustering. During final diarization, the system SHALL pass the campaign's `num_speakers` setting to pyannote for fixed-count speaker detection. Each detected speaker MUST be assigned a provisional label (e.g., "Player 1", "Player 2") or matched to a known roster entry name.
 
 #### Scenario: Speakers detected with voice signatures
 - **WHEN** a recording is processed and the campaign has voice signatures
-- **THEN** the system runs the diarize pipeline (VAD → embeddings → spectral clustering), computes per-speaker centroids, matches centroids against stored signatures via cosine similarity, and labels transcript segments with matched roster entry names or "Unknown Speaker"
+- **THEN** the system matches audio segments against stored signatures and labels transcript segments with the matched roster entry names
 
 #### Scenario: Speakers detected without voice signatures (cold start)
 - **WHEN** a recording is processed and the campaign has no voice signatures
-- **THEN** the system runs the diarize pipeline with spectral clustering and labels transcript segments with provisional identifiers (e.g., "Player 1", "Player 2")
-
-#### Scenario: Speakers detected during recording
-- **WHEN** a recording is in progress with multiple people speaking
-- **THEN** the system detects distinct speakers and labels transcript segments with provisional speaker identifiers (e.g., "Speaker 1", "Speaker 2")
+- **THEN** the system uses pyannote's built-in clustering and labels transcript segments with provisional identifiers (e.g., "Player 1", "Player 2")
 
 #### Scenario: Single speaker detected
 - **WHEN** only one person has spoken during the recording
@@ -27,11 +23,11 @@ The system SHALL automatically detect and distinguish different speakers in the 
 
 #### Scenario: Final diarization uses campaign speaker count
 - **WHEN** a recording is stopped in a campaign with `num_speakers` set to 5
-- **THEN** the final diarization pass uses spectral clustering with exactly 5 clusters
+- **THEN** the final diarization pass uses pyannote with `num_speakers=5` to detect exactly 5 speaker groups
 
 #### Scenario: Speaker count fetched from campaign
 - **WHEN** `run_final_diarization` is called for a session
-- **THEN** the system looks up the session's campaign and retrieves its `num_speakers` value, passing it as `num_speakers` to spectral clustering
+- **THEN** the system looks up the session's campaign and retrieves its `num_speakers` value, passing it to the pyannote pipeline
 
 #### Scenario: Single speaker campaign
 - **WHEN** a campaign has `num_speakers` set to 1
@@ -39,52 +35,30 @@ The system SHALL automatically detect and distinguish different speakers in the 
 
 #### Scenario: Retranscribe with speaker count override
 - **WHEN** the user retranscribes a session with `num_speakers` set to 3
-- **THEN** the final diarization pass uses spectral clustering with exactly 3 clusters, regardless of the campaign's default
+- **THEN** the final diarization pass uses pyannote with `num_speakers=3`, regardless of the campaign's default
 
 #### Scenario: Recording with speaker count override
 - **WHEN** the user sets `num_speakers` to 4 before recording
-- **THEN** the final diarization after recording stop uses 4 clusters, regardless of the campaign's default
+- **THEN** the final diarization after recording stop uses 4 speakers, regardless of the campaign's default
 
-#### Scenario: Chunk diarization unchanged
-- **WHEN** real-time chunk diarization runs during recording
-- **THEN** it continues to use its existing approach (the diarize library replacement only affects the final pass)
+### Requirement: HuggingFace token for pyannote access
+The system SHALL require a HuggingFace access token to download and use pyannote.audio's gated models. The token SHALL be configurable via the Settings page (stored in the `settings` table as `hf_token`) with an `HF_TOKEN` environment variable as fallback. The system SHALL display a clear error with setup instructions if no token is configured when diarization is attempted.
 
-### Requirement: Per-stage diarization progress reporting
-The system SHALL report progress at each stage of the diarization pipeline via SSE events. The system SHALL report VAD completion with the number of speech segments found, embedding extraction progress as X/Y per speech segment, and clustering completion with the number of speakers and segments found.
+#### Scenario: Token configured via settings
+- **WHEN** the DM enters a HuggingFace token in the Settings page
+- **THEN** the token is stored in the settings table and used for pyannote model access
 
-#### Scenario: VAD progress reported
-- **WHEN** voice activity detection completes on a 2-hour audio file and finds 500 speech segments totaling 90 minutes of speech
-- **THEN** the system emits an SSE progress event with detail "Found 500 speech segments (5400s of speech)"
+#### Scenario: Token configured via environment variable
+- **WHEN** no `hf_token` is stored in settings but the `HF_TOKEN` environment variable is set
+- **THEN** the system uses the environment variable value for pyannote model access
 
-#### Scenario: Embedding extraction progress reported
-- **WHEN** the system is extracting speaker embeddings for 500 speech segments
-- **THEN** the system emits SSE progress events at regular intervals with detail "Extracting speaker embeddings (250/500)..."
+#### Scenario: No token configured
+- **WHEN** diarization is triggered and no HuggingFace token is configured (neither settings nor env var)
+- **THEN** the system returns an error with a message explaining that a HuggingFace token is required, including a link to the pyannote license agreement page
 
-#### Scenario: Clustering progress reported
-- **WHEN** spectral clustering completes and identifies 5 speakers across 300 segments
-- **THEN** the system emits an SSE progress event with detail "Found 5 speakers, 300 segments"
-
-#### Scenario: Diarization phase announced
-- **WHEN** diarization begins
-- **THEN** the system emits an SSE phase event with `{"phase": "diarization"}` and a progress event with detail "Detecting speech activity..."
-
-### Requirement: No HuggingFace token required for diarization
-The system SHALL NOT require a HuggingFace token for speaker diarization or embedding extraction. All models (Silero VAD, WeSpeaker ResNet34-LM) SHALL download automatically on first use without authentication.
-
-#### Scenario: Diarization without HF token
-- **WHEN** a session is processed and no HuggingFace token is configured
-- **THEN** diarization completes successfully using auto-downloaded models
-
-#### Scenario: First-time model download
-- **WHEN** diarization runs for the first time on a fresh install
-- **THEN** required models are downloaded automatically without user intervention
-
-### Requirement: No GPU device targeting
-The system SHALL run all diarization and embedding extraction on CPU. The system SHALL NOT target MPS, CUDA, or any GPU device for the diarize pipeline.
-
-#### Scenario: Diarization runs on CPU
-- **WHEN** diarization is invoked on a machine with an Apple Silicon GPU
-- **THEN** all processing runs on CPU via ONNX Runtime and PyTorch CPU backend
+#### Scenario: HuggingFace token field in settings UI
+- **WHEN** the DM opens the Settings page
+- **THEN** a "HuggingFace Token" field is displayed in the Providers section with a link to the pyannote license agreement
 
 ### Requirement: Speaker-transcript alignment
 The system SHALL align speaker diarization results with transcript segments so that each transcript segment is associated with exactly one speaker. When a single transcript segment contains speech from multiple speakers, it MUST be split at the speaker boundary. When using signature-based matching, speaker labels SHALL use the roster entry's player/character name directly instead of generic labels.
@@ -100,17 +74,6 @@ The system SHALL align speaker diarization results with transcript segments so t
 #### Scenario: Segments aligned with unknown speakers
 - **WHEN** diarization has completed and some segments could not be matched to any voice signature
 - **THEN** those segments are labeled "Unknown Speaker" and the user can manually reassign them
-
-### Requirement: Near-real-time diarization during recording
-The system SHALL run diarization on buffered audio chunks during recording and send provisional speaker labels to the frontend. Speaker labels MAY change as more audio context becomes available.
-
-#### Scenario: Provisional labels during recording
-- **WHEN** the DM is recording and two different people have spoken
-- **THEN** transcript segments in the live view show different provisional speaker labels, which may be refined as more audio is processed
-
-#### Scenario: Labels stabilize after recording ends
-- **WHEN** a recording is stopped
-- **THEN** the system runs a final diarization pass on the complete audio to produce stable, consistent speaker labels across the entire session
 
 ### Requirement: Manual speaker name assignment
 The system SHALL allow the DM to assign player names and character names to all detected speakers in a single batch operation. The speaker panel MUST show all speakers simultaneously with input fields for player name and character name, roster quick-select buttons, a single "Save All" button that updates all speakers at once, and a "Merge into..." action per speaker for combining duplicate speakers. The assignment MUST update all transcript segments for each speaker in the session. The speaker list MAY shrink after user-initiated merges, reflecting that two detected speakers were the same person.
