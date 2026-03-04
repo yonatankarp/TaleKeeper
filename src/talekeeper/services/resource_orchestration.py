@@ -21,9 +21,8 @@ def cleanup_transcription() -> None:
 
 
 def cleanup_diarization() -> None:
-    """Unload diarization models and clear MPS cache."""
+    """Clean up after diarization (no models to unload, just gc)."""
     logger.info("Cleaning up diarization resources")
-    diarization.unload_models()
     gc.collect()
 
 

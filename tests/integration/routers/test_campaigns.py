@@ -81,7 +81,7 @@ async def test_campaign_returns_similarity_threshold(client: AsyncClient) -> Non
     assert resp.status_code == 200
     data = resp.json()
     assert "similarity_threshold" in data
-    assert data["similarity_threshold"] == 0.65
+    assert data["similarity_threshold"] == 0.75
 
 
 @pytest.mark.asyncio

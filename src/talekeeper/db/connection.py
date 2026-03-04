@@ -189,7 +189,7 @@ async def _migrate_add_similarity_threshold(db: aiosqlite.Connection) -> None:
     col_names = [c["name"] for c in cols]
     if "similarity_threshold" not in col_names:
         await db.execute(
-            "ALTER TABLE campaigns ADD COLUMN similarity_threshold REAL DEFAULT 0.65"
+            "ALTER TABLE campaigns ADD COLUMN similarity_threshold REAL DEFAULT 0.75"
         )
 
 
@@ -228,7 +228,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
     language TEXT NOT NULL DEFAULT 'en',
     num_speakers INTEGER NOT NULL DEFAULT 5,
     session_start_number INTEGER NOT NULL DEFAULT 0,
-    similarity_threshold REAL DEFAULT 0.65,
+    similarity_threshold REAL DEFAULT 0.75,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

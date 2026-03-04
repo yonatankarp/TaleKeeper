@@ -81,3 +81,17 @@ async def update_settings(body: SettingsUpdate) -> dict:
         val = body.settings["data_dir"].strip() or None
         set_user_data_dir(val)
     return {"updated": True}
+
+
+@router.post("/reset")
+async def reset_settings() -> dict:
+    """Reset all settings to defaults, preserving sensitive keys."""
+    async with get_db() as db:
+        await db.execute(
+            "DELETE FROM settings WHERE key NOT IN ({})".format(
+                ", ".join("?" for _ in SENSITIVE_KEYS)
+            ),
+            tuple(SENSITIVE_KEYS),
+        )
+    set_user_data_dir(None)
+    return {"reset": True}

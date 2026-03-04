@@ -90,4 +90,27 @@ describe('SetupWizard', () => {
     await flush();
     expect(screen.getByText('Re-check')).toBeInTheDocument();
   });
+
+  it('shows HuggingFace token section', async () => {
+    mockSetupStatus();
+    render(SetupWizard, { props: makeProps() });
+    await flush();
+    expect(screen.getByText(/HuggingFace Token/)).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('hf_...')).toBeInTheDocument();
+  });
+
+  it('includes hf_token when saving settings', async () => {
+    mockSetupStatus();
+    render(SetupWizard, { props: makeProps() });
+    await flush();
+
+    const input = screen.getByPlaceholderText('hf_...');
+    await fireEvent.input(input, { target: { value: 'hf_test123' } });
+    await fireEvent.click(screen.getByText('Re-check'));
+    await flush();
+
+    expect(api.put).toHaveBeenCalledWith('/settings', {
+      settings: expect.objectContaining({ hf_token: 'hf_test123' }),
+    });
+  });
 });

@@ -78,6 +78,13 @@
     if (result.path) settings.data_dir = result.path;
   }
 
+  async function resetDefaults() {
+    if (!confirm('Reset all settings to defaults? API keys and tokens will be preserved.')) return;
+    await api.post('/settings/reset');
+    await load();
+    showToast('Settings reset to defaults');
+  }
+
   $effect(() => { load(); });
 </script>
 
@@ -113,7 +120,7 @@
 
     <div class="provider-group">
       <h4>HuggingFace</h4>
-      <p class="hint" style="margin-bottom: 0.75rem;">Required for speaker diarization. You must accept the <a href="https://huggingface.co/pyannote/speaker-diarization-3.1" target="_blank" rel="noopener">pyannote model license</a> before using diarization.</p>
+      <p class="hint" style="margin-bottom: 0.75rem;">Required for speaker diarization. Create a free account at <a href="https://huggingface.co" target="_blank" rel="noopener">huggingface.co</a>, then generate an access token under <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">Settings &gt; Access Tokens</a>. You must also accept the <a href="https://huggingface.co/pyannote/speaker-diarization-3.1" target="_blank" rel="noopener">pyannote model license</a> before using diarization.</p>
       <label>
         Access Token
         <input type="password" bind:value={settings.hf_token} placeholder="hf_..." />
@@ -215,6 +222,7 @@
   <div class="bottom-actions">
     <button class="btn btn-primary" onclick={save}>Save Settings</button>
     <button class="btn" onclick={() => wizard.show()}>Run Setup Wizard</button>
+    <button class="btn btn-danger" onclick={resetDefaults}>Reset to Defaults</button>
   </div>
 </div>
 {/if}
@@ -356,4 +364,6 @@
   .btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn-primary:hover { background: var(--accent-hover); }
+  .btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .btn-danger:hover { opacity: 0.85; }
 </style>

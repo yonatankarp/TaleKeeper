@@ -713,7 +713,7 @@ class TestDefaultValues:
     async def test_campaign_default_similarity_threshold(
         self, db: aiosqlite.Connection
     ):
-        """Campaign similarity_threshold defaults to 0.65."""
+        """Campaign similarity_threshold defaults to 0.75."""
         cursor = await db.execute(
             "INSERT INTO campaigns (name) VALUES (?)", ("Threshold Test",)
         )
@@ -723,7 +723,7 @@ class TestDefaultValues:
         rows = await db.execute_fetchall(
             "SELECT similarity_threshold FROM campaigns WHERE id = ?", (cid,)
         )
-        assert rows[0]["similarity_threshold"] == 0.65
+        assert rows[0]["similarity_threshold"] == 0.75
 
 
 # ===================================================================

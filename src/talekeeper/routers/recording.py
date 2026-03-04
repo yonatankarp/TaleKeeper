@@ -275,16 +275,37 @@ async def process_audio(session_id: int, num_speakers: int | None = Query(defaul
             # Signal phase change to frontend
             yield _sse_event("phase", {"phase": "diarization"})
 
-            # Run speaker diarization
+            # Run speaker diarization with progress reporting
             from talekeeper.services.diarization import run_final_diarization
             from talekeeper.services.audio import audio_to_wav
 
+            progress_events: list[str] = []
+
+            def _diarization_progress(stage: str, detail: dict) -> None:
+                if stage == "vad_start":
+                    progress_events.append(_sse_event("progress", {"detail": "Detecting speech activity..."}))
+                elif stage == "vad_done":
+                    n = detail["num_segments"]
+                    secs = int(detail["total_speech_seconds"])
+                    progress_events.append(_sse_event("progress", {"detail": f"Found {n} speech segments ({secs}s of speech)"}))
+                elif stage == "embeddings":
+                    cur, total = detail["current"], detail["total"]
+                    if cur % max(1, total // 20) == 0 or cur == total:
+                        progress_events.append(_sse_event("progress", {"detail": f"Extracting speaker embeddings ({cur}/{total})..."}))
+                elif stage == "clustering_done":
+                    ns = detail["num_speakers"]
+                    nseg = detail["num_segments"]
+                    progress_events.append(_sse_event("progress", {"detail": f"Found {ns} speakers, {nseg} segments"}))
+
             wav_path = audio_to_wav(audio_path)
             try:
-                await run_final_diarization(session_id, wav_path, num_speakers_override=num_speakers)
+                await run_final_diarization(session_id, wav_path, num_speakers_override=num_speakers, progress_callback=_diarization_progress)
             finally:
                 if wav_path.exists():
                     wav_path.unlink()
+
+            for evt in progress_events:
+                yield evt
 
             cleanup_diarization()
 
@@ -395,12 +416,33 @@ async def process_all(session_id: int, num_speakers: int | None = Query(default=
             from talekeeper.services.diarization import run_final_diarization
             from talekeeper.services.audio import audio_to_wav
 
+            progress_events: list[str] = []
+
+            def _diarization_progress(stage: str, detail: dict) -> None:
+                if stage == "vad_start":
+                    progress_events.append(_sse_event("progress", {"detail": "Detecting speech activity..."}))
+                elif stage == "vad_done":
+                    n = detail["num_segments"]
+                    secs = int(detail["total_speech_seconds"])
+                    progress_events.append(_sse_event("progress", {"detail": f"Found {n} speech segments ({secs}s of speech)"}))
+                elif stage == "embeddings":
+                    cur, total = detail["current"], detail["total"]
+                    if cur % max(1, total // 20) == 0 or cur == total:
+                        progress_events.append(_sse_event("progress", {"detail": f"Extracting speaker embeddings ({cur}/{total})..."}))
+                elif stage == "clustering_done":
+                    ns = detail["num_speakers"]
+                    nseg = detail["num_segments"]
+                    progress_events.append(_sse_event("progress", {"detail": f"Found {ns} speakers, {nseg} segments"}))
+
             wav_path = audio_to_wav(audio_path)
             try:
-                await run_final_diarization(session_id, wav_path, num_speakers_override=num_speakers)
+                await run_final_diarization(session_id, wav_path, num_speakers_override=num_speakers, progress_callback=_diarization_progress)
             finally:
                 if wav_path.exists():
                     wav_path.unlink()
+
+            for evt in progress_events:
+                yield evt
 
             cleanup_diarization()
 

@@ -44,6 +44,7 @@ describe('SettingsPage', () => {
   afterEach(() => {
     cleanup();
     vi.mocked(api.get).mockReset();
+    vi.mocked(api.post).mockReset().mockResolvedValue({});
   });
 
   it('shows loading state initially', () => {
@@ -195,5 +196,43 @@ describe('SettingsPage', () => {
     render(SettingsPage);
     await flush();
     expect(screen.getByText(/Where session recordings/)).toBeInTheDocument();
+  });
+
+  it('shows Reset to Defaults button', async () => {
+    vi.mocked(api.get).mockResolvedValue(mockSettings);
+    render(SettingsPage);
+    await flush();
+    expect(screen.getByText('Reset to Defaults')).toBeInTheDocument();
+  });
+
+  it('calls reset endpoint and reloads settings on confirm', async () => {
+    vi.mocked(api.get).mockResolvedValue(mockSettings);
+    vi.mocked(api.post).mockResolvedValue({ reset: true });
+    vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
+    render(SettingsPage);
+    await flush();
+
+    await fireEvent.click(screen.getByText('Reset to Defaults'));
+    await flush();
+
+    expect(api.post).toHaveBeenCalledWith('/settings/reset');
+    // Should reload settings (initial load + reload after reset)
+    expect(api.get).toHaveBeenCalledTimes(2);
+
+    vi.mocked(globalThis.confirm).mockRestore();
+  });
+
+  it('does not call reset endpoint when cancelled', async () => {
+    vi.mocked(api.get).mockResolvedValue(mockSettings);
+    vi.spyOn(globalThis, 'confirm').mockReturnValue(false);
+    render(SettingsPage);
+    await flush();
+
+    await fireEvent.click(screen.getByText('Reset to Defaults'));
+    await flush();
+
+    expect(api.post).not.toHaveBeenCalledWith('/settings/reset');
+
+    vi.mocked(globalThis.confirm).mockRestore();
   });
 });

@@ -103,13 +103,15 @@ def test_transcribe_vad_to_transcribe_to_remap(mock_vad, mock_build, mock_get_mo
     offset_map = [(0.0, 5.0), (5.0, 20.0)]
     mock_build.return_value = (speech_audio, offset_map)
 
-    # Mock model transcribe to return segments in buffer time
+    # Mock model transcribe to return segments in mel frames
+    # lightning-whisper-mlx returns [start_frames, end_frames, text]
+    # where seconds = frames * HOP_LENGTH / SAMPLE_RATE = frames * 0.01
     mock_model = MagicMock()
     mock_model.transcribe.return_value = {
         "text": "Hello World",
         "segments": [
-            [0.5, 2.0, " Hello "],  # buffer time 0.5-2.0 → original 5.5-7.0
-            [6.0, 8.0, " World "],  # buffer time 6.0-8.0 → original 21.0-23.0
+            [50, 200, " Hello "],  # 0.5s-2.0s in buffer → original 5.5-7.0
+            [600, 800, " World "],  # 6.0s-8.0s in buffer → original 21.0-23.0
         ],
         "language": "en",
     }

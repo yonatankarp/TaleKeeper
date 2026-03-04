@@ -1,4 +1,4 @@
-"""Tests for the speaker diarization service (pyannote.audio)."""
+"""Tests for the speaker diarization service (diarize library)."""
 
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -8,6 +8,8 @@ import numpy as np
 
 from talekeeper.services.diarization import (
     _merge_segments,
+    _build_segments_from_labels,
+    _extract_embeddings_with_progress,
     align_speakers_with_transcript,
     diarize,
     diarize_with_signatures,
@@ -17,7 +19,7 @@ from talekeeper.services.diarization import (
 )
 
 
-# ---- Engine-agnostic tests (5.8) ----
+# ---- Engine-agnostic tests ----
 
 
 def test_merge_segments():
@@ -61,155 +63,252 @@ def test_align_speakers_with_transcript():
     assert aligned[1]["speaker_label"] == "B"
 
 
-# ---- Pyannote diarization tests (5.10) ----
+# ---- _build_segments_from_labels tests ----
 
 
-class FakeSegment:
-    """Mock pyannote Segment."""
-    def __init__(self, start, end):
-        self.start = start
-        self.end = end
-        self.duration = end - start
+def test_build_segments_from_labels():
+    """_build_segments_from_labels converts clustering output to SpeakerSegments."""
+    # Mock speech segments (not directly used by the function, but part of the API)
+    speech_segments = [MagicMock(start=0.0, end=3.0), MagicMock(start=5.0, end=8.0)]
 
-
-class FakeAnnotation:
-    """Mock pyannote Annotation."""
-    def __init__(self, tracks):
-        self._tracks = tracks  # list of (segment, track_name, speaker_label)
-
-    def itertracks(self, yield_label=False):
-        for seg, track, label in self._tracks:
-            if yield_label:
-                yield seg, track, label
-            else:
-                yield seg, track
-
-    def labels(self):
-        return list(set(label for _, _, label in self._tracks))
-
-    def label_timeline(self, label):
-        return [seg for seg, _, lbl in self._tracks if lbl == label]
-
-
-@patch("talekeeper.services.diarization._get_pipeline")
-def test_diarize_with_pyannote(mock_get_pipeline):
-    """diarize runs pyannote pipeline and returns merged speaker segments."""
-    fake_tracks = [
-        (FakeSegment(0.0, 3.0), "A", "SPEAKER_00"),
-        (FakeSegment(3.0, 5.0), "B", "SPEAKER_01"),
-        (FakeSegment(5.0, 7.0), "C", "SPEAKER_00"),
+    subsegments = [
+        (0.0, 1.2, 0),
+        (0.6, 1.8, 0),
+        (5.0, 6.2, 1),
+        (5.6, 6.8, 1),
     ]
-    mock_pipeline = MagicMock()
-    mock_pipeline.return_value = FakeAnnotation(fake_tracks)
-    mock_get_pipeline.return_value = mock_pipeline
+    labels = np.array([0, 0, 1, 1])
 
-    segments = diarize(Path("test.wav"), hf_token="fake-token")
+    segments = _build_segments_from_labels(speech_segments, subsegments, labels)
 
-    assert len(segments) == 3
+    # Should merge adjacent same-speaker segments
+    assert len(segments) == 2
     assert segments[0].speaker_label == "SPEAKER_00"
     assert segments[0].start_time == 0.0
-    assert segments[0].end_time == 3.0
+    assert segments[0].end_time == 1.8
     assert segments[1].speaker_label == "SPEAKER_01"
-    assert segments[2].speaker_label == "SPEAKER_00"
+    assert segments[1].start_time == 5.0
+    assert segments[1].end_time == 6.8
 
 
-@patch("talekeeper.services.diarization._get_pipeline")
-def test_diarize_passes_num_speakers(mock_get_pipeline):
-    """diarize passes num_speakers to pyannote pipeline."""
-    mock_pipeline = MagicMock()
-    mock_pipeline.return_value = FakeAnnotation([])
-    mock_get_pipeline.return_value = mock_pipeline
-
-    diarize(Path("test.wav"), num_speakers=3, hf_token="fake-token")
-
-    mock_pipeline.assert_called_once_with(str(Path("test.wav")), num_speakers=3)
+def test_build_segments_from_labels_empty():
+    """_build_segments_from_labels returns empty list for no subsegments."""
+    segments = _build_segments_from_labels([], [], np.array([]))
+    assert segments == []
 
 
-# ---- Signature matching tests (5.11) ----
+# ---- _extract_embeddings_with_progress tests ----
 
 
-@patch("talekeeper.services.diarization._get_embedding_model")
-@patch("talekeeper.services.diarization._get_pipeline")
-def test_diarize_with_signatures_matches_above_threshold(mock_get_pipeline, mock_get_emb):
+@patch("talekeeper.services.diarization.sf")
+@patch("talekeeper.services.diarization.wespeakerruntime", create=True)
+def test_extract_embeddings_with_progress_callback(mock_wespeaker_module, mock_sf):
+    """_extract_embeddings_with_progress invokes callback with (current, total)."""
+    # We need to patch the import inside the function
+    # Mock audio read
+    mock_sf.read.return_value = (np.zeros(48000), 16000)  # 3s of silence
+    mock_sf.write = MagicMock()
+
+    # Create fake speech segments with .start and .end
+    class FakeSpeechSeg:
+        def __init__(self, start, end):
+            self.start = start
+            self.end = end
+
+    speech_segments = [FakeSpeechSeg(0.0, 1.0), FakeSpeechSeg(1.5, 2.5)]
+
+    # Mock wespeakerruntime.Speaker
+    mock_speaker_instance = MagicMock()
+    mock_speaker_instance.extract_embedding.return_value = np.random.randn(1, 256).astype(np.float32)
+
+    progress_calls = []
+
+    def progress_cb(stage, detail):
+        if stage == "embeddings":
+            progress_calls.append((detail["current"], detail["total"]))
+
+    with patch("wespeakerruntime.Speaker", return_value=mock_speaker_instance):
+        embeddings, subsegments = _extract_embeddings_with_progress(
+            Path("test.wav"), speech_segments, progress_callback=progress_cb
+        )
+
+    # Should have called progress for each segment
+    assert len(progress_calls) == 2
+    assert progress_calls[0] == (1, 2)
+    assert progress_calls[1] == (2, 2)
+    assert embeddings.shape[1] == 256
+
+
+# ---- Diarization tests ----
+
+
+@patch("talekeeper.services.diarization.cluster_speakers", create=True)
+@patch("talekeeper.services.diarization._extract_embeddings_with_progress")
+@patch("talekeeper.services.diarization.run_vad", create=True)
+def test_diarize(mock_run_vad, mock_extract, mock_cluster):
+    """diarize runs the pipeline and returns merged speaker segments."""
+
+    class FakeSeg:
+        def __init__(self, start, end):
+            self.start = start
+            self.end = end
+
+    mock_run_vad.return_value = [FakeSeg(0.0, 3.0), FakeSeg(5.0, 8.0)]
+
+    embeddings = np.random.randn(4, 256).astype(np.float32)
+    subsegments = [
+        (0.0, 1.2, 0),
+        (0.6, 1.8, 0),
+        (5.0, 6.2, 1),
+        (5.6, 6.8, 1),
+    ]
+    mock_extract.return_value = (embeddings, subsegments)
+
+    labels = np.array([0, 0, 1, 1])
+    mock_cluster.return_value = (labels, None)
+
+    # Need to patch the imports inside diarize()
+    with patch("talekeeper.services.diarization.diarize.__module__", "talekeeper.services.diarization"):
+        # Actually call the function directly — the mocks above patch at module level
+        # but diarize() imports from diarize.vad and diarize.clustering inside the function.
+        # We need to patch those properly.
+        pass
+
+    # Let's use a different approach — patch the actual imports
+    with patch.dict("sys.modules", {
+        "diarize.vad": MagicMock(run_vad=mock_run_vad),
+        "diarize.clustering": MagicMock(cluster_speakers=mock_cluster),
+    }):
+        segments = diarize(Path("test.wav"))
+
+    assert len(segments) == 2
+    assert segments[0].speaker_label == "SPEAKER_00"
+    assert segments[0].start_time == 0.0
+    assert segments[1].speaker_label == "SPEAKER_01"
+
+
+@patch("talekeeper.services.diarization._extract_embeddings_with_progress")
+def test_diarize_passes_num_speakers(mock_extract):
+    """diarize passes num_speakers to cluster_speakers()."""
+    class FakeSeg:
+        def __init__(self, start, end):
+            self.start = start
+            self.end = end
+
+    mock_run_vad = MagicMock(return_value=[FakeSeg(0.0, 3.0)])
+
+    embeddings = np.random.randn(1, 256).astype(np.float32)
+    mock_extract.return_value = (embeddings, [(0.0, 1.2, 0)])
+
+    mock_cluster = MagicMock(return_value=(np.array([0]), None))
+
+    with patch.dict("sys.modules", {
+        "diarize.vad": MagicMock(run_vad=mock_run_vad),
+        "diarize.clustering": MagicMock(cluster_speakers=mock_cluster),
+    }):
+        diarize(Path("test.wav"), num_speakers=3)
+
+    mock_cluster.assert_called_once()
+    _, kwargs = mock_cluster.call_args
+    assert kwargs["num_speakers"] == 3
+
+
+# ---- Signature matching tests ----
+
+
+@patch("talekeeper.services.diarization._extract_embeddings_with_progress")
+def test_diarize_with_signatures_matches_above_threshold(mock_extract):
     """diarize_with_signatures matches speakers above similarity threshold."""
-    # Two pyannote speakers
-    fake_tracks = [
-        (FakeSegment(0.0, 5.0), "A", "SPEAKER_00"),
-        (FakeSegment(5.0, 10.0), "B", "SPEAKER_01"),
-    ]
-    mock_pipeline = MagicMock()
-    mock_pipeline.return_value = FakeAnnotation(fake_tracks)
-    mock_get_pipeline.return_value = mock_pipeline
+    class FakeSeg:
+        def __init__(self, start, end):
+            self.start = start
+            self.end = end
 
-    # Mock embedding model: returns embeddings that match signatures
-    emb_speaker_00 = np.array([1.0, 0.0, 0.0])  # matches signature 1
-    emb_speaker_01 = np.array([0.0, 1.0, 0.0])  # matches signature 2
+    mock_run_vad = MagicMock(return_value=[FakeSeg(0.0, 5.0), FakeSeg(5.0, 10.0)])
 
-    mock_emb_model = MagicMock()
-    call_count = [0]
-    def mock_crop(wav, seg):
-        nonlocal call_count
-        # First calls are for SPEAKER_00, later for SPEAKER_01
-        if any(seg.start == t.start for t in fake_tracks[0][0:1]):
-            return emb_speaker_00
-        return emb_speaker_01
-    # Use side_effect to return different embeddings based on segment
-    mock_emb_model.crop = MagicMock(side_effect=[emb_speaker_00, emb_speaker_01])
-    mock_get_emb.return_value = mock_emb_model
+    # Two speakers, each with a distinct 256-dim embedding
+    emb_speaker_0 = np.zeros(256, dtype=np.float32)
+    emb_speaker_0[0] = 1.0  # points along dim 0
+    emb_speaker_1 = np.zeros(256, dtype=np.float32)
+    emb_speaker_1[1] = 1.0  # points along dim 1
 
-    # Signatures: two roster entries with orthogonal embeddings
-    sig1 = np.array([1.0, 0.0, 0.0])  # roster 101
-    sig2 = np.array([0.0, 1.0, 0.0])  # roster 102
+    embeddings = np.stack([emb_speaker_0, emb_speaker_1])
+    subsegments = [(0.0, 5.0, 0), (5.0, 10.0, 1)]
+    mock_extract.return_value = (embeddings, subsegments)
 
-    segments = diarize_with_signatures(
-        Path("test.wav"),
-        signatures=[(101, sig1), (102, sig2)],
-        similarity_threshold=0.5,
-        hf_token="fake-token",
-    )
+    # Clustering assigns label 0 to first, label 1 to second
+    labels = np.array([0, 1])
+    mock_cluster = MagicMock(return_value=(labels, None))
 
-    # Should match both speakers to roster entries
-    labels = [s.speaker_label for s in segments]
-    assert "roster_101" in labels
-    assert "roster_102" in labels
+    # Signatures matching the embeddings
+    sig1 = np.zeros(256, dtype=np.float32)
+    sig1[0] = 1.0  # matches speaker 0
+    sig2 = np.zeros(256, dtype=np.float32)
+    sig2[1] = 1.0  # matches speaker 1
+
+    with patch.dict("sys.modules", {
+        "diarize.vad": MagicMock(run_vad=mock_run_vad),
+        "diarize.clustering": MagicMock(cluster_speakers=mock_cluster),
+    }):
+        segments = diarize_with_signatures(
+            Path("test.wav"),
+            signatures=[(101, sig1), (102, sig2)],
+            similarity_threshold=0.5,
+        )
+
+    labels_out = [s.speaker_label for s in segments]
+    assert "roster_101" in labels_out
+    assert "roster_102" in labels_out
 
 
-@patch("talekeeper.services.diarization._get_embedding_model")
-@patch("talekeeper.services.diarization._get_pipeline")
-def test_diarize_with_signatures_unknown_below_threshold(mock_get_pipeline, mock_get_emb):
+@patch("talekeeper.services.diarization._extract_embeddings_with_progress")
+def test_diarize_with_signatures_unknown_below_threshold(mock_extract):
     """diarize_with_signatures labels speakers below threshold as Unknown."""
-    fake_tracks = [
-        (FakeSegment(0.0, 5.0), "A", "SPEAKER_00"),
-    ]
-    mock_pipeline = MagicMock()
-    mock_pipeline.return_value = FakeAnnotation(fake_tracks)
-    mock_get_pipeline.return_value = mock_pipeline
+    class FakeSeg:
+        def __init__(self, start, end):
+            self.start = start
+            self.end = end
 
-    # Speaker embedding is orthogonal to all signatures
-    emb = np.array([0.0, 0.0, 1.0])
-    mock_emb_model = MagicMock()
-    mock_emb_model.crop = MagicMock(return_value=emb)
-    mock_get_emb.return_value = mock_emb_model
+    mock_run_vad = MagicMock(return_value=[FakeSeg(0.0, 5.0)])
 
-    sig1 = np.array([1.0, 0.0, 0.0])
+    # Speaker embedding is orthogonal to signature
+    emb = np.zeros(256, dtype=np.float32)
+    emb[2] = 1.0  # points along dim 2
 
-    segments = diarize_with_signatures(
-        Path("test.wav"),
-        signatures=[(101, sig1)],
-        similarity_threshold=0.5,
-        hf_token="fake-token",
-    )
+    embeddings = np.stack([emb])
+    subsegments = [(0.0, 5.0, 0)]
+    mock_extract.return_value = (embeddings, subsegments)
+
+    labels = np.array([0])
+    mock_cluster = MagicMock(return_value=(labels, None))
+
+    sig1 = np.zeros(256, dtype=np.float32)
+    sig1[0] = 1.0  # orthogonal to speaker
+
+    with patch.dict("sys.modules", {
+        "diarize.vad": MagicMock(run_vad=mock_run_vad),
+        "diarize.clustering": MagicMock(cluster_speakers=mock_cluster),
+    }):
+        segments = diarize_with_signatures(
+            Path("test.wav"),
+            signatures=[(101, sig1)],
+            similarity_threshold=0.5,
+        )
 
     assert all(s.speaker_label == "Unknown Speaker" for s in segments)
 
 
-# ---- HF token resolution tests (5.12) ----
+# ---- HF token resolution tests ----
 
 
 async def test_resolve_hf_token_from_settings(db):
-    """_resolve_hf_token reads token from settings table."""
+    """_resolve_hf_token reads and decrypts token from settings table."""
+    from talekeeper.routers.settings import _encrypt
+
+    encrypted = _encrypt("hf_test_token_123")
     await db.execute(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES ('hf_token', 'hf_test_token_123')"
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('hf_token', ?)",
+        (encrypted,),
     )
     await db.commit()
 

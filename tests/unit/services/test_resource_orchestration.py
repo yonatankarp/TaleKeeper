@@ -24,12 +24,10 @@ def test_cleanup_transcription(mock_transcription, mock_gc):
 
 
 @patch("talekeeper.services.resource_orchestration.gc")
-@patch("talekeeper.services.resource_orchestration.diarization")
-def test_cleanup_diarization(mock_diarization, mock_gc):
-    """cleanup_diarization unloads models and runs gc."""
+def test_cleanup_diarization(mock_gc):
+    """cleanup_diarization runs gc (no models to unload with diarize library)."""
     cleanup_diarization()
 
-    mock_diarization.unload_models.assert_called_once()
     mock_gc.collect.assert_called_once()
 
 

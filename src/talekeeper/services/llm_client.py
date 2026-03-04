@@ -19,6 +19,8 @@ _ollama_cache: dict[str, bool] = {}
 
 async def resolve_config() -> dict:
     """Resolve LLM configuration: settings table > env vars > defaults."""
+    from talekeeper.routers.settings import SENSITIVE_KEYS, _decrypt
+
     settings: dict[str, str] = {}
     try:
         async with get_db() as db:
@@ -27,7 +29,10 @@ async def resolve_config() -> dict:
             )
             for r in rows:
                 if r["value"]:
-                    settings[r["key"]] = r["value"]
+                    value = r["value"]
+                    if r["key"] in SENSITIVE_KEYS:
+                        value = _decrypt(value)
+                    settings[r["key"]] = value
     except Exception:
         pass
 

@@ -16,7 +16,7 @@ from talekeeper.services.audio import (
 
 @patch("talekeeper.services.audio.AudioSegment")
 def test_audio_to_wav(mock_audio_segment_cls, tmp_path):
-    """audio_to_wav converts any audio to 16kHz mono WAV."""
+    """audio_to_wav converts any audio to a temp 16kHz mono WAV (preserving original)."""
     src = tmp_path / "input.mp3"
     src.touch()
 
@@ -30,8 +30,10 @@ def test_audio_to_wav(mock_audio_segment_cls, tmp_path):
     mock_audio_segment_cls.from_file.assert_called_once_with(str(src))
     mock_audio.set_channels.assert_called_once_with(1)
     mock_audio.set_frame_rate.assert_called_once_with(16000)
-    mock_audio.export.assert_called_once_with(str(src.with_suffix(".wav")), format="wav")
-    assert result == src.with_suffix(".wav")
+    # Output goes to a temp file, not alongside the original
+    assert result != src
+    assert result.suffix == ".wav"
+    mock_audio.export.assert_called_once_with(str(result), format="wav")
 
 
 @patch("talekeeper.services.audio.AudioSegment")

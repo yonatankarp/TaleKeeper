@@ -207,10 +207,15 @@ def transcribe(
         result = model.transcribe(str(tmp_path), language=language)
 
         # Step 5: Remap timestamps
+        # lightning-whisper-mlx returns segments as [start_frames, end_frames, text]
+        # where frames are mel spectrogram positions; convert to seconds via
+        # HOP_LENGTH (160) / SAMPLE_RATE (16000) = 0.01s per frame.
+        FRAMES_TO_SEC = 160 / 16000  # HOP_LENGTH / SAMPLE_RATE
         segments = []
         for seg in result.get("segments", []):
-            # segments are [start, end, text]
-            buf_start, buf_end, text = seg[0], seg[1], seg[2]
+            buf_start = seg[0] * FRAMES_TO_SEC
+            buf_end = seg[1] * FRAMES_TO_SEC
+            text = seg[2]
             orig_start = _remap_timestamp(buf_start, offset_map)
             orig_end = _remap_timestamp(buf_end, offset_map)
             text = text.strip()

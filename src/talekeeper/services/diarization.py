@@ -1,11 +1,15 @@
-"""Speaker diarization service using pyannote.audio."""
+"""Speaker diarization service using diarize library (Silero VAD + WeSpeaker + spectral clustering)."""
 
+import gc
 import logging
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
+import soundfile as sf
 
 from talekeeper.db import get_db
 
@@ -13,8 +17,10 @@ logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16_000
 
-_pipeline = None
-_embedding_model = None
+# Embedding extraction constants (matching diarize library internals)
+MIN_SEGMENT_DURATION = 0.4
+EMBEDDING_WINDOW = 1.2
+EMBEDDING_STEP = 0.6
 
 
 @dataclass
@@ -24,18 +30,23 @@ class SpeakerSegment:
     end_time: float
 
 
+ProgressCallback = Callable[[str, dict], None]
+
+
 async def _resolve_hf_token() -> str:
     """Resolve HuggingFace token: settings table > HF_TOKEN env var.
 
     Raises ValueError if no token is configured.
     """
+    from talekeeper.routers.settings import _decrypt
+
     try:
         async with get_db() as db:
             rows = await db.execute_fetchall(
                 "SELECT value FROM settings WHERE key = 'hf_token'"
             )
             if rows and rows[0]["value"]:
-                return rows[0]["value"]
+                return _decrypt(rows[0]["value"])
     except Exception:
         pass
 
@@ -50,135 +61,230 @@ async def _resolve_hf_token() -> str:
     )
 
 
-def _get_pipeline(hf_token: str):
-    """Load and cache the pyannote diarization pipeline on MPS."""
-    global _pipeline
-    if _pipeline is not None:
-        return _pipeline
-
-    import torch
-    from pyannote.audio import Pipeline
-
-    logger.info("Loading pyannote speaker-diarization-3.1 pipeline")
-    _pipeline = Pipeline.from_pretrained(
-        "pyannote/speaker-diarization-3.1",
-        use_auth_token=hf_token,
-    )
-
-    # Target Apple GPU via MPS
-    if torch.backends.mps.is_available():
-        _pipeline.to(torch.device("mps"))
-        logger.info("Pyannote pipeline moved to MPS device")
-
-    return _pipeline
-
-
-def _get_embedding_model(hf_token: str):
-    """Load and cache the pyannote embedding model."""
-    global _embedding_model
-    if _embedding_model is not None:
-        return _embedding_model
-
-    import torch
-    from pyannote.audio import Inference
-
-    logger.info("Loading pyannote/embedding model")
-    _embedding_model = Inference(
-        "pyannote/embedding",
-        use_auth_token=hf_token,
-    )
-
-    if torch.backends.mps.is_available():
-        _embedding_model.to(torch.device("mps"))
-
-    return _embedding_model
-
-
 def unload_models() -> None:
-    """Unload cached pipeline and embedding model to free memory."""
-    global _pipeline, _embedding_model
-    _pipeline = None
-    _embedding_model = None
-    try:
-        import torch
-        if torch.backends.mps.is_available():
-            torch.mps.empty_cache()
-    except Exception:
-        pass
+    """No-op — diarize library manages its own model lifecycle. Just gc.collect()."""
+    gc.collect()
+
+
+def _extract_embeddings_with_progress(
+    audio_path: Path,
+    speech_segments: list,
+    progress_callback: ProgressCallback | None = None,
+) -> tuple[np.ndarray, list[tuple[float, float, int]]]:
+    """Extract 256-dim WeSpeaker embeddings with per-segment progress reporting.
+
+    Args:
+        audio_path: Path to audio file (WAV).
+        speech_segments: List of SpeechSegment objects from run_vad().
+        progress_callback: Optional callback(stage, detail_dict) for progress.
+
+    Returns:
+        (embeddings, subsegments) where embeddings is (N, 256) ndarray and
+        subsegments is list of (start, end, parent_idx) tuples.
+    """
+    import wespeakerruntime
+
+    model = wespeakerruntime.Speaker(lang="en")
+
+    audio_data, sr = sf.read(str(audio_path))
+    if audio_data.ndim > 1:
+        audio_data = audio_data.mean(axis=1)
+
+    embeddings: list[np.ndarray] = []
+    subsegments: list[tuple[float, float, int]] = []
+    total = len(speech_segments)
+
+    for idx, seg in enumerate(speech_segments):
+        seg_duration = seg.end - seg.start
+
+        if seg_duration < MIN_SEGMENT_DURATION:
+            if progress_callback:
+                progress_callback("embeddings", {"current": idx + 1, "total": total})
+            continue
+
+        # Split long segments with a sliding window
+        if seg_duration <= EMBEDDING_WINDOW * 1.5:
+            windows = [(seg.start, seg.end)]
+        else:
+            windows: list[tuple[float, float]] = []
+            win_start = seg.start
+            while win_start + MIN_SEGMENT_DURATION < seg.end:
+                win_end = min(win_start + EMBEDDING_WINDOW, seg.end)
+                windows.append((win_start, win_end))
+                win_start += EMBEDDING_STEP
+
+        for win_start, win_end in windows:
+            start_sample = int(win_start * sr)
+            end_sample = int(win_end * sr)
+            segment_audio = audio_data[start_sample:end_sample]
+
+            tmp_path: str | None = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                    tmp_path = tmp.name
+                    sf.write(tmp_path, segment_audio, sr)
+                emb = model.extract_embedding(tmp_path)
+            except Exception:
+                logger.debug("Embedding extraction failed for window %.2f-%.2f", win_start, win_end)
+                continue
+            finally:
+                if tmp_path is not None:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+
+            if emb is not None:
+                if emb.ndim == 2:
+                    emb = emb[0]
+                embeddings.append(emb)
+                subsegments.append((win_start, win_end, idx))
+
+        if progress_callback:
+            progress_callback("embeddings", {"current": idx + 1, "total": total})
+
+    if not embeddings:
+        return np.empty((0, 256), dtype=np.float32), []
+
+    X = np.stack(embeddings)
+    logger.info("Extracted %d embeddings (dim=%d)", X.shape[0], X.shape[1])
+    return X, subsegments
+
+
+def _build_segments_from_labels(
+    speech_segments: list,
+    subsegments: list[tuple[float, float, int]],
+    labels: np.ndarray,
+) -> list[SpeakerSegment]:
+    """Convert clustering labels into SpeakerSegments, merging adjacent same-speaker segments.
+
+    Args:
+        speech_segments: Original VAD speech segments.
+        subsegments: List of (start, end, parent_idx) from embedding extraction.
+        labels: Cluster labels array from cluster_speakers(), shape (N,).
+
+    Returns:
+        Merged list of SpeakerSegments.
+    """
+    if len(subsegments) == 0:
+        return []
+
+    # Build raw segments from subsegments + labels
+    raw_segments = []
+    for (start, end, _parent_idx), label in zip(subsegments, labels):
+        raw_segments.append(SpeakerSegment(
+            speaker_label=f"SPEAKER_{label:02d}",
+            start_time=start,
+            end_time=end,
+        ))
+
+    # Sort by start time
+    raw_segments.sort(key=lambda s: s.start_time)
+
+    return _merge_segments(raw_segments)
 
 
 def diarize(
     wav_path: Path,
     num_speakers: int | None = None,
-    hf_token: str | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> list[SpeakerSegment]:
-    """Run pyannote diarization on a WAV file and return speaker segments."""
-    if hf_token is None:
-        raise ValueError("hf_token is required for diarization")
+    """Run diarization pipeline: VAD -> embeddings -> spectral clustering.
 
-    pipeline = _get_pipeline(hf_token)
+    Args:
+        wav_path: Path to WAV file.
+        num_speakers: Exact number of speakers for clustering.
+        progress_callback: Optional callback(stage, detail_dict) for progress.
 
-    kwargs = {}
+    Returns:
+        List of merged SpeakerSegments.
+    """
+    from diarize.vad import run_vad
+    from diarize.clustering import cluster_speakers
+
+    logger.info("Starting diarization on %s", wav_path.name)
+
+    # Stage 1: VAD
+    if progress_callback:
+        progress_callback("vad_start", {})
+    speech_segments = run_vad(str(wav_path))
+    total_speech = sum(s.end - s.start for s in speech_segments)
+    logger.info("VAD found %d speech segments (%.0fs of speech)", len(speech_segments), total_speech)
+    if progress_callback:
+        progress_callback("vad_done", {
+            "num_segments": len(speech_segments),
+            "total_speech_seconds": total_speech,
+        })
+
+    if not speech_segments:
+        return []
+
+    # Stage 2: Embedding extraction with progress
+    embeddings, subsegments = _extract_embeddings_with_progress(
+        wav_path, speech_segments, progress_callback
+    )
+
+    if embeddings.shape[0] == 0:
+        return []
+
+    # Stage 3: Spectral clustering
+    if progress_callback:
+        progress_callback("clustering_start", {})
+    cluster_kwargs = {}
     if num_speakers is not None:
-        kwargs["num_speakers"] = num_speakers
+        cluster_kwargs["num_speakers"] = num_speakers
+    labels, _details = cluster_speakers(embeddings, **cluster_kwargs)
+    num_found_speakers = len(set(labels))
+    logger.info("Clustering found %d speakers, %d segments", num_found_speakers, len(labels))
+    if progress_callback:
+        progress_callback("clustering_done", {
+            "num_speakers": num_found_speakers,
+            "num_segments": len(labels),
+        })
 
-    annotation = pipeline(str(wav_path), **kwargs)
-
-    segments = []
-    for turn, _, speaker in annotation.itertracks(yield_label=True):
-        segments.append(SpeakerSegment(
-            speaker_label=speaker,
-            start_time=turn.start,
-            end_time=turn.end,
-        ))
-
-    return _merge_segments(segments)
+    return _build_segments_from_labels(speech_segments, subsegments, labels)
 
 
 def extract_speaker_embedding(
     wav_path: Path,
     time_ranges: list[tuple[float, float]],
-    hf_token: str | None = None,
 ) -> np.ndarray | None:
-    """Extract averaged, L2-normalized 192-dim embedding from time ranges using pyannote.
+    """Extract averaged, L2-normalized 256-dim embedding from time ranges using WeSpeaker.
 
     Args:
-        wav_path: Path to WAV file
-        time_ranges: List of (start_sec, end_sec) tuples
-        hf_token: HuggingFace token
+        wav_path: Path to WAV file.
+        time_ranges: List of (start_sec, end_sec) tuples.
 
     Returns:
-        1-D numpy array (192-dim), or None if no valid embeddings found.
+        1-D numpy array (256-dim), or None if no valid embeddings found.
     """
-    if hf_token is None:
-        raise ValueError("hf_token is required for embedding extraction")
+    from diarize.vad import run_vad
 
-    from pyannote.core import Segment
+    # Run VAD to get speech segments
+    speech_segments = run_vad(str(wav_path))
 
-    model = _get_embedding_model(hf_token)
-    all_embeddings = []
+    # Extract all embeddings
+    embeddings, subsegments = _extract_embeddings_with_progress(wav_path, speech_segments)
 
-    for start_sec, end_sec in time_ranges:
-        # Skip very short segments
-        if end_sec - start_sec < 0.3:
-            continue
-        try:
-            segment = Segment(start_sec, end_sec)
-            embedding = model.crop(str(wav_path), segment)
-            if embedding is not None and len(embedding) > 0:
-                # embedding shape can be (N, dim) for multi-window or (dim,)
-                if embedding.ndim > 1:
-                    embedding = np.mean(embedding, axis=0)
-                all_embeddings.append(embedding)
-        except Exception as e:
-            logger.warning("Failed to extract embedding for segment %.1f-%.1f: %s", start_sec, end_sec, e)
-            continue
+    if embeddings.shape[0] == 0:
+        return None
 
-    if not all_embeddings:
+    # Filter to subsegments overlapping with the provided time ranges
+    matching_indices = []
+    for i, (sub_start, sub_end, _parent_idx) in enumerate(subsegments):
+        for range_start, range_end in time_ranges:
+            overlap_start = max(sub_start, range_start)
+            overlap_end = min(sub_end, range_end)
+            if overlap_start < overlap_end:
+                matching_indices.append(i)
+                break
+
+    if not matching_indices:
         return None
 
     # Average and L2-normalize
-    avg_embedding = np.mean(all_embeddings, axis=0)
+    matching_embs = embeddings[matching_indices]
+    avg_embedding = np.mean(matching_embs, axis=0)
     norm = np.linalg.norm(avg_embedding)
     if norm > 0:
         avg_embedding = avg_embedding / norm
@@ -189,89 +295,117 @@ def extract_speaker_embedding(
 def diarize_with_signatures(
     wav_path: Path,
     signatures: list[tuple[int, np.ndarray]],
-    similarity_threshold: float = 0.65,
+    similarity_threshold: float = 0.75,
     num_speakers: int | None = None,
-    hf_token: str | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> list[SpeakerSegment]:
-    """Diarize by running pyannote pipeline then matching speakers against known signatures.
+    """Diarize then match speaker clusters against known voice signatures.
+
+    Two-pass approach:
+    1. Run full diarize pipeline (VAD -> embeddings -> clustering)
+    2. Compute per-speaker centroids and match against stored signatures
 
     Args:
         wav_path: Path to WAV file.
         signatures: List of (roster_entry_id, embedding) pairs.
         similarity_threshold: Cosine similarity threshold for matching.
-        num_speakers: Optional number of speakers hint.
-        hf_token: HuggingFace token.
+        num_speakers: Exact number of speakers for clustering.
+        progress_callback: Optional callback for progress.
 
     Returns:
         List of SpeakerSegments with labels like "roster_<id>" or "Unknown Speaker".
     """
-    if hf_token is None:
-        raise ValueError("hf_token is required for diarization")
+    from diarize.vad import run_vad
+    from diarize.clustering import cluster_speakers
 
-    from pyannote.core import Segment
+    logger.info("Starting diarization with signatures on %s", wav_path.name)
 
-    pipeline = _get_pipeline(hf_token)
-    embedding_model = _get_embedding_model(hf_token)
+    # Stage 1: VAD
+    if progress_callback:
+        progress_callback("vad_start", {})
+    speech_segments = run_vad(str(wav_path))
+    total_speech = sum(s.end - s.start for s in speech_segments)
+    logger.info("VAD found %d speech segments (%.0fs)", len(speech_segments), total_speech)
+    if progress_callback:
+        progress_callback("vad_done", {
+            "num_segments": len(speech_segments),
+            "total_speech_seconds": total_speech,
+        })
 
-    # Run diarization
-    kwargs = {}
+    if not speech_segments:
+        return []
+
+    # Stage 2: Embedding extraction
+    embeddings, subsegments = _extract_embeddings_with_progress(
+        wav_path, speech_segments, progress_callback
+    )
+
+    if embeddings.shape[0] == 0:
+        return []
+
+    # Stage 3: Clustering
+    if progress_callback:
+        progress_callback("clustering_start", {})
+    cluster_kwargs = {}
     if num_speakers is not None:
-        kwargs["num_speakers"] = num_speakers
-    annotation = pipeline(str(wav_path), **kwargs)
+        cluster_kwargs["num_speakers"] = num_speakers
+    labels, _details = cluster_speakers(embeddings, **cluster_kwargs)
+    num_found_speakers = len(set(labels))
+    logger.info("Clustering found %d speakers", num_found_speakers)
+    if progress_callback:
+        progress_callback("clustering_done", {
+            "num_speakers": num_found_speakers,
+            "num_segments": len(labels),
+        })
 
-    # Get unique speaker labels from pyannote
-    speaker_labels = annotation.labels()
+    # Stage 4: Match speaker clusters to signatures
+    logger.info("Matching speakers to %d voice signatures", len(signatures))
 
-    # Extract embedding for each pyannote speaker
-    speaker_embeddings: dict[str, np.ndarray] = {}
-    for label in speaker_labels:
-        segments_for_label = list(annotation.label_timeline(label))
-        embs = []
-        for seg in segments_for_label:
-            if seg.duration < 0.3:
-                continue
-            try:
-                emb = embedding_model.crop(str(wav_path), seg)
-                if emb is not None and len(emb) > 0:
-                    if emb.ndim > 1:
-                        emb = np.mean(emb, axis=0)
-                    embs.append(emb)
-            except Exception:
-                continue
+    # Group embeddings by speaker label via time overlap
+    speaker_embeddings: dict[int, list[np.ndarray]] = {}
+    for i, label in enumerate(labels):
+        label_int = int(label)
+        if label_int not in speaker_embeddings:
+            speaker_embeddings[label_int] = []
+        speaker_embeddings[label_int].append(embeddings[i])
 
-        if embs:
-            avg = np.mean(embs, axis=0)
-            norm = np.linalg.norm(avg)
-            if norm > 0:
-                avg = avg / norm
-            speaker_embeddings[label] = avg
+    # Compute L2-normalized centroid per speaker
+    speaker_centroids: dict[int, np.ndarray] = {}
+    for label_int, embs in speaker_embeddings.items():
+        centroid = np.mean(embs, axis=0)
+        norm = np.linalg.norm(centroid)
+        if norm > 0:
+            centroid = centroid / norm
+        speaker_centroids[label_int] = centroid
 
     # Build signature matrix
     sig_ids = [s[0] for s in signatures]
     sig_matrix = np.stack([s[1] for s in signatures])
 
-    # Match each pyannote speaker to a signature
-    label_map: dict[str, str] = {}
-    for label, emb in speaker_embeddings.items():
-        similarities = emb @ sig_matrix.T
-        best_idx = np.argmax(similarities)
-        best_sim = similarities[best_idx]
+    # Match each speaker centroid to a signature
+    label_map: dict[int, str] = {}
+    for label_int, centroid in speaker_centroids.items():
+        similarities = centroid @ sig_matrix.T
+        best_idx = int(np.argmax(similarities))
+        best_sim = float(similarities[best_idx])
 
         if best_sim >= similarity_threshold:
-            label_map[label] = f"roster_{sig_ids[best_idx]}"
+            label_map[label_int] = f"roster_{sig_ids[best_idx]}"
         else:
-            label_map[label] = "Unknown Speaker"
+            label_map[label_int] = "Unknown Speaker"
 
     # Build output segments
     raw_segments = []
-    for turn, _, speaker in annotation.itertracks(yield_label=True):
-        mapped_label = label_map.get(speaker, "Unknown Speaker")
+    for (start, end, _parent_idx), label in zip(subsegments, labels):
+        label_int = int(label)
+        mapped_label = label_map.get(label_int, "Unknown Speaker")
         raw_segments.append(SpeakerSegment(
             speaker_label=mapped_label,
-            start_time=turn.start,
-            end_time=turn.end,
+            start_time=start,
+            end_time=end,
         ))
 
+    raw_segments.sort(key=lambda s: s.start_time)
     return _merge_segments(raw_segments)
 
 
@@ -337,8 +471,6 @@ async def generate_voice_signatures(session_id: int) -> list[dict]:
     import json
     from talekeeper.services.audio import audio_to_wav
 
-    hf_token = await _resolve_hf_token()
-
     async with get_db() as db:
         session = await db.execute_fetchall(
             "SELECT id, campaign_id, audio_path FROM sessions WHERE id = ?",
@@ -384,7 +516,7 @@ async def generate_voice_signatures(session_id: int) -> list[dict]:
                 if not time_ranges:
                     continue
 
-                embedding = extract_speaker_embedding(wav_path, time_ranges, hf_token=hf_token)
+                embedding = extract_speaker_embedding(wav_path, time_ranges)
                 if embedding is None:
                     continue
 
@@ -416,16 +548,17 @@ async def generate_voice_signatures(session_id: int) -> list[dict]:
 
 
 async def run_final_diarization(
-    session_id: int, wav_path: Path, num_speakers_override: int | None = None
+    session_id: int,
+    wav_path: Path,
+    num_speakers_override: int | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> None:
     """Run final diarization pass and update all speaker labels in DB.
 
     When voice signatures exist, uses signature-based matching with the campaign's
-    similarity_threshold. Otherwise falls back to unsupervised pyannote diarization.
+    similarity_threshold. Otherwise falls back to unsupervised diarization.
     """
     import json
-
-    hf_token = await _resolve_hf_token()
 
     async with get_db() as db:
         session_rows = await db.execute_fetchall(
@@ -434,7 +567,7 @@ async def run_final_diarization(
         campaign_id = session_rows[0]["campaign_id"] if session_rows else None
 
         num_speakers = num_speakers_override
-        similarity_threshold = 0.65
+        similarity_threshold = 0.75
 
         if campaign_id:
             campaign_rows = await db.execute_fetchall(
@@ -470,7 +603,7 @@ async def run_final_diarization(
             wav_path, sig_pairs,
             similarity_threshold=similarity_threshold,
             num_speakers=num_speakers,
-            hf_token=hf_token,
+            progress_callback=progress_callback,
         )
 
         roster_info = {s[0]: (s[2], s[3]) for s in signatures}
@@ -513,7 +646,7 @@ async def run_final_diarization(
                         (speaker_id_map[label], seg["id"]),
                     )
     else:
-        segments = diarize(wav_path, num_speakers, hf_token=hf_token)
+        segments = diarize(wav_path, num_speakers, progress_callback=progress_callback)
         unique_labels = sorted(set(s.speaker_label for s in segments))
 
         async with get_db() as db:

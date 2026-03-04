@@ -7,11 +7,11 @@ Enable per-speaker voice profile storage and matching at the campaign level, all
 ## Requirements
 
 ### Requirement: Voice signature extraction from labeled sessions
-The system SHALL extract voice signatures from sessions where speakers have been manually assigned to campaign roster entries. For each roster-linked speaker, the system SHALL compute an averaged, L2-normalized embedding from all transcript segments assigned to that speaker. The extraction SHALL reuse the existing ECAPA-TDNN encoder.
+The system SHALL extract voice signatures from sessions where speakers have been manually assigned to campaign roster entries. For each roster-linked speaker, the system SHALL compute an averaged, L2-normalized 256-dimensional embedding from all transcript segments assigned to that speaker using the WeSpeaker ResNet34-LM model via ONNX Runtime. The extraction SHALL use VAD to identify speech segments, extract windowed embeddings (1.2s windows, 0.6s step), filter to subsegments overlapping the speaker's transcript time ranges, and average the results.
 
 #### Scenario: Extract signatures from a fully labeled session
 - **WHEN** a session has audio, transcript segments, and at least one speaker assigned to a roster entry, and the user triggers "Generate Voice Signatures"
-- **THEN** the system extracts windowed embeddings from each labeled speaker's segments, averages them into one embedding per speaker, normalizes it, and stores it as a voice signature linked to the roster entry
+- **THEN** the system runs VAD on the audio, extracts 256-dim WeSpeaker embeddings from subsegments overlapping each labeled speaker's transcript ranges, averages them into one embedding per speaker, L2-normalizes it, and stores it as a voice signature linked to the roster entry
 
 #### Scenario: Partial labeling
 - **WHEN** a session has 4 detected speakers but only 2 are assigned to roster entries
@@ -33,19 +33,23 @@ The system SHALL store voice signatures at the campaign level, linked to roster 
 - **THEN** the associated voice signature is also deleted (CASCADE)
 
 ### Requirement: Signature-based speaker matching during diarization
-The system SHALL use stored voice signatures as the primary speaker identification method when signatures exist for the session's campaign. For each audio window, the system SHALL compute cosine similarity against all campaign signatures and assign the window to the closest matching speaker above a minimum similarity threshold.
+The system SHALL use stored voice signatures as a post-clustering identification method when signatures exist for the session's campaign. The system SHALL first run the full diarize pipeline (VAD → embeddings → spectral clustering) to produce speaker clusters, then compute an L2-normalized centroid embedding for each cluster, then compare each centroid against all campaign voice signatures using cosine similarity. A speaker cluster SHALL be matched to the closest signature above the campaign's `similarity_threshold` (default 0.75 for new campaigns). Unmatched clusters SHALL be labeled "Unknown Speaker".
 
 #### Scenario: Diarization with signatures available
 - **WHEN** a session is diarized and the campaign has voice signatures for 4 roster entries
-- **THEN** each audio window is compared against all 4 signatures and assigned to the best match above the similarity threshold
+- **THEN** the system runs the full diarize pipeline, computes per-cluster centroids, compares each centroid against all 4 signatures, and assigns matched roster entry names to clusters above the similarity threshold
 
 #### Scenario: Audio window below similarity threshold
-- **WHEN** an audio window's highest cosine similarity to any stored signature is below the minimum threshold
-- **THEN** that window is labeled as "Unknown Speaker"
+- **WHEN** a speaker cluster's centroid has a highest cosine similarity below the campaign's similarity threshold to any stored signature
+- **THEN** that cluster is labeled "Unknown Speaker"
 
 #### Scenario: Fallback to clustering when no signatures exist
 - **WHEN** a session is diarized and the campaign has no voice signatures
-- **THEN** the system falls back to unsupervised agglomerative clustering
+- **THEN** the system uses unsupervised spectral clustering only
+
+#### Scenario: Default similarity threshold for new campaigns
+- **WHEN** a new campaign is created
+- **THEN** its similarity_threshold defaults to 0.75
 
 ### Requirement: Voice signature management API
 The system SHALL provide API endpoints to generate voice signatures from a session and to list existing signatures for a campaign.
@@ -76,3 +80,10 @@ The system SHALL display a "Generate Voice Signatures" button in the speaker pan
 #### Scenario: Signature status indicators
 - **WHEN** the speaker panel is displayed for a session in a campaign with voice signatures
 - **THEN** each speaker linked to a roster entry with a signature shows a visual indicator (e.g., icon or badge) confirming a voice signature exists
+
+### Requirement: No HuggingFace token required for voice signature extraction
+The system SHALL NOT require a HuggingFace token for extracting voice signatures. The WeSpeaker ResNet34-LM model SHALL download automatically via ONNX Runtime without authentication.
+
+#### Scenario: Voice signature generation without HF token
+- **WHEN** the user generates voice signatures and no HuggingFace token is configured
+- **THEN** voice signature extraction completes successfully using the auto-downloaded WeSpeaker model
