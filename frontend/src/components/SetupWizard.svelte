@@ -19,6 +19,8 @@
   let showImageInfo = $state(false);
   let checking = $state(false);
 
+  let hfToken = $state('');
+  let showHfInfo = $state(false);
   let llmBaseUrl = $state('');
   let llmApiKey = $state('');
   let llmModel = $state('');
@@ -30,6 +32,7 @@
   async function load() {
     status = await api.get<SetupStatus>('/setup-status');
     const settings = await api.get<Record<string, string>>('/settings');
+    hfToken = settings.hf_token || '';
     llmBaseUrl = settings.llm_base_url || '';
     llmApiKey = settings.llm_api_key || '';
     llmModel = settings.llm_model || '';
@@ -44,6 +47,7 @@
     try {
       await api.put('/settings', {
         settings: {
+          hf_token: hfToken,
           llm_base_url: llmBaseUrl,
           llm_api_key: llmApiKey,
           llm_model: llmModel,
@@ -102,6 +106,34 @@
                 </div>
               </label>
               <span class="resolved-path">Current: <code>{status.data_dir}</code></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="check" class:ok={!!hfToken && hfToken !== '********'}>
+          <span class="icon">{!!hfToken && hfToken !== '********' ? '\u2713' : '\u2717'}</span>
+          <div class="hf-section">
+            <span>
+              HuggingFace Token (for speaker diarization)
+              <button class="info-btn" onclick={() => (showHfInfo = !showHfInfo)} title="What is this?">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+              </button>
+            </span>
+            {#if showHfInfo}
+              <div class="info-tooltip">
+                <p>Required for speaker diarization (identifying who said what). You must:</p>
+                <ol>
+                  <li>Create a free account at <strong>huggingface.co</strong></li>
+                  <li>Accept the <a href="https://huggingface.co/pyannote/speaker-diarization-3.1" target="_blank" rel="noopener">pyannote model license</a></li>
+                  <li>Create an access token in your HuggingFace settings</li>
+                </ol>
+              </div>
+            {/if}
+            <div class="llm-config">
+              <label>
+                Access Token
+                <input type="password" bind:value={hfToken} placeholder="hf_..." />
+              </label>
             </div>
           </div>
         </div>
@@ -253,6 +285,7 @@
   .check:not(.ok) .icon { color: var(--danger); }
 
   .data-section { flex: 1; min-width: 0; }
+  .hf-section { flex: 1; min-width: 0; }
   .llm-section { flex: 1; min-width: 0; }
   .image-section { flex: 1; min-width: 0; }
 

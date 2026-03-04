@@ -36,12 +36,12 @@ The `POST /api/sessions/{session_id}/retranscribe` endpoint SHALL return a `Stre
 
 ### Requirement: Chunked processing within SSE endpoint
 
-The retranscription endpoint SHALL split the audio file into overlapping chunks (per the chunked-audio-processing spec), transcribe each chunk sequentially using `transcribe_stream()`, apply overlap deduplication, and emit segments as they are produced. Only one WAV chunk SHALL be in memory at a time.
+The retranscription endpoint SHALL split the audio file into overlapping chunks (per the chunked-audio-processing spec), run VAD pre-filtering and transcription on each chunk sequentially using lightning-whisper-mlx with batched decoding, apply overlap deduplication, and emit segments as they are produced. Only one WAV chunk SHALL be in memory at a time.
 
 #### Scenario: Large file is processed in chunks
 - **WHEN** a 2-hour audio file is retranscribed
 - **THEN** the file is split into 5-minute overlapping chunks
-- **AND** each chunk is transcribed sequentially
+- **AND** each chunk is VAD-filtered and transcribed sequentially using lightning-whisper-mlx
 - **AND** segments are streamed to the client as each chunk completes
 - **AND** memory usage remains bounded regardless of file length
 

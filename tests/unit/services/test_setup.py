@@ -18,14 +18,8 @@ from talekeeper.services.setup import check_first_run
     return_value={"status": "error", "message": "no"},
 )
 @patch(
-    "talekeeper.services.setup.image_client.resolve_config",
-    new_callable=AsyncMock,
-    return_value={"base_url": "http://test", "api_key": None, "model": "test"},
-)
-@patch(
-    "talekeeper.services.setup.image_client.health_check",
-    new_callable=AsyncMock,
-    return_value={"status": "error", "message": "no"},
+    "talekeeper.services.setup.image_generation.health_check",
+    return_value={"status": "error", "message": "mflux not available"},
 )
 @patch("talekeeper.services.setup.get_db_dir")
 @patch("talekeeper.services.setup.get_user_data_dir")
@@ -33,7 +27,6 @@ async def test_check_first_run(
     mock_user_dir,
     mock_db_dir,
     mock_img_health,
-    mock_img_config,
     mock_llm_health,
     mock_llm_config,
     db,

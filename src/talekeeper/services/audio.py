@@ -13,12 +13,16 @@ DEFAULT_OVERLAP_MS = 30 * 1000  # 30 seconds
 
 
 def audio_to_wav(audio_path: Path, wav_path: Path | None = None) -> Path:
-    """Convert any audio file to WAV for ML model input (auto-detects format).
+    """Convert any audio file to 16kHz mono WAV for ML model input.
 
-    Returns the path to the resulting WAV file.
+    Returns the path to the resulting WAV file.  When no explicit
+    *wav_path* is given, a temporary file is used so the original audio
+    is never overwritten or deleted by callers' cleanup logic.
     """
     if wav_path is None:
-        wav_path = audio_path.with_suffix(".wav")
+        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        wav_path = Path(tmp.name)
+        tmp.close()
 
     audio = AudioSegment.from_file(str(audio_path))
     audio = audio.set_channels(1).set_frame_rate(16000)

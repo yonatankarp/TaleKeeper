@@ -1,6 +1,7 @@
 """Tests for recording and audio upload API endpoints."""
 
 import io
+import json
 from pathlib import Path
 
 import pytest
@@ -62,7 +63,11 @@ async def _seed_with_audio(db, tmp_path: Path) -> dict:
 @patch("talekeeper.services.audio.audio_to_wav")
 @patch("talekeeper.services.diarization.run_final_diarization", new_callable=AsyncMock)
 @patch("talekeeper.services.transcription.transcribe_chunked")
+@patch("talekeeper.services.resource_orchestration.cleanup_transcription")
+@patch("talekeeper.services.resource_orchestration.cleanup_diarization")
 async def test_process_audio_sse_happy_path(
+    mock_cleanup_diar: MagicMock,
+    mock_cleanup_trans: MagicMock,
     mock_transcribe: MagicMock,
     mock_diarize: AsyncMock,
     mock_audio_to_wav: MagicMock,
@@ -78,7 +83,7 @@ async def test_process_audio_sse_happy_path(
 
     # 2. Configure mocks
     # transcribe_chunked is a generator yielding ChunkProgress and TranscriptSegment
-    def fake_transcribe_chunked(audio_path, model_size="medium", language="en"):
+    def fake_transcribe_chunked(audio_path, **kwargs):
         yield ChunkProgress(chunk=1, total_chunks=2)
         yield TranscriptSegment(text="The dragon attacked.", start_time=0.0, end_time=3.0)
         yield ChunkProgress(chunk=2, total_chunks=2)
@@ -155,6 +160,10 @@ async def test_process_audio_sse_happy_path(
     mock_transcribe.assert_called_once()
     mock_audio_to_wav.assert_called_once()
     mock_diarize.assert_called_once()
+
+    # Verify cleanup was called between phases
+    mock_cleanup_trans.assert_called_once()
+    mock_cleanup_diar.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -320,3 +329,95 @@ async def test_upload_audio_replaces_existing(client: AsyncClient) -> None:
         )
         assert len(seg_rows) == 0, "Old transcript segments should be cleared on re-upload"
         assert len(spk_rows) == 0, "Old speakers should be cleared on re-upload"
+
+
+# ---------------------------------------------------------------------------
+# Task 8.7: process-all pipeline endpoint
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+@patch("talekeeper.services.audio.audio_to_wav")
+@patch("talekeeper.services.diarization.run_final_diarization", new_callable=AsyncMock)
+@patch("talekeeper.services.transcription.transcribe_chunked")
+@patch("talekeeper.services.resource_orchestration.cleanup_transcription")
+@patch("talekeeper.services.resource_orchestration.cleanup_diarization")
+@patch("talekeeper.services.resource_orchestration.cleanup_image_generation")
+@patch("talekeeper.services.llm_client.resolve_config", new_callable=AsyncMock)
+@patch("talekeeper.services.llm_client.unload_model", new_callable=AsyncMock)
+@patch("talekeeper.services.summarization.generate_full_summary", new_callable=AsyncMock)
+@patch("talekeeper.services.image_generation.craft_scene_description", new_callable=AsyncMock)
+@patch("talekeeper.services.image_generation.generate_session_image", new_callable=AsyncMock)
+async def test_process_all_pipeline(
+    mock_gen_image: AsyncMock,
+    mock_craft_scene: AsyncMock,
+    mock_full_summary: AsyncMock,
+    mock_unload_llm: AsyncMock,
+    mock_llm_config: AsyncMock,
+    mock_cleanup_img: MagicMock,
+    mock_cleanup_diar: MagicMock,
+    mock_cleanup_trans: MagicMock,
+    mock_transcribe: MagicMock,
+    mock_diarize: AsyncMock,
+    mock_audio_to_wav: MagicMock,
+    client: AsyncClient,
+    tmp_path: Path,
+) -> None:
+    """POST /api/sessions/{id}/process-all streams full pipeline SSE events."""
+    async with get_db() as db:
+        ids = await _seed_with_audio(db, tmp_path)
+    session_id = ids["session_id"]
+
+    # Configure mocks
+    def fake_transcribe_chunked(audio_path, **kwargs):
+        yield ChunkProgress(chunk=1, total_chunks=1)
+        yield TranscriptSegment(text="The dragon attacked.", start_time=0.0, end_time=3.0)
+
+    mock_transcribe.side_effect = fake_transcribe_chunked
+
+    fake_wav = tmp_path / "fake.wav"
+    fake_wav.write_bytes(b"fake-wav")
+    mock_audio_to_wav.return_value = fake_wav
+    mock_diarize.return_value = None
+
+    mock_llm_config.return_value = {"base_url": "http://llm", "api_key": None, "model": "test-model"}
+    mock_full_summary.return_value = "The party fought a dragon."
+    mock_craft_scene.return_value = "A dragon in a dark cave."
+    mock_gen_image.return_value = {"id": 1, "file_path": "/tmp/gen.png", "prompt": "A dragon in a dark cave."}
+
+    # Call endpoint
+    resp = await client.post(f"/api/sessions/{session_id}/process-all")
+    assert resp.status_code == 200
+    assert "text/event-stream" in resp.headers.get("content-type", "")
+
+    events = parse_sse_events(resp.text)
+    phase_events = [e["data"]["phase"] for e in events if e["event"] == "phase"]
+    assert phase_events == ["transcription", "diarization", "summaries", "image_generation"]
+
+    done_events = [e for e in events if e["event"] == "done"]
+    assert len(done_events) == 1
+    assert done_events[0]["data"]["segments_count"] == 1
+    assert done_events[0]["data"]["summaries_count"] >= 1
+    assert done_events[0]["data"]["image"] is not None
+
+    # Verify cleanup was called between phases
+    mock_cleanup_trans.assert_called_once()
+    mock_cleanup_diar.assert_called_once()
+    mock_unload_llm.assert_awaited_once()
+    mock_cleanup_img.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_process_all_no_audio(client: AsyncClient) -> None:
+    """POST /api/sessions/{id}/process-all returns 400 when session has no audio."""
+    async with get_db() as db:
+        ids = await _seed(db)
+
+    resp = await client.post(f"/api/sessions/{ids['session_id']}/process-all")
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_process_all_session_not_found(client: AsyncClient) -> None:
+    """POST /api/sessions/{id}/process-all returns 404 for nonexistent session."""
+    resp = await client.post("/api/sessions/99999/process-all")
+    assert resp.status_code == 404

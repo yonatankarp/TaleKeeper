@@ -10,8 +10,8 @@ from pydantic import BaseModel
 from typing import AsyncGenerator
 
 from talekeeper.db import get_db
-from talekeeper.services import llm_client, image_client
-from talekeeper.services.image_generation import craft_scene_description, generate_session_image
+from talekeeper.services import llm_client
+from talekeeper.services.image_generation import craft_scene_description, generate_session_image, health_check as image_health_check
 from talekeeper.services.summarization import format_transcript
 
 router = APIRouter(tags=["images"])
@@ -60,14 +60,15 @@ async def generate_image(session_id: int, body: GenerateImageRequest):
         llm_config = None
         content = None
 
-    img_config = await image_client.resolve_config()
-    img_health = await image_client.health_check(img_config["base_url"], img_config["api_key"], img_config["model"])
+    img_health = image_health_check()
     if img_health["status"] != "ok":
         raise HTTPException(status_code=503, detail=f"Image provider unavailable: {img_health.get('message', 'unknown error')}")
 
     # --- SSE generator (slow work happens here) ---
     async def _stream() -> AsyncGenerator[str, None]:
         try:
+            from talekeeper.services.resource_orchestration import cleanup_image_generation
+
             prompt = body.prompt.strip() if body.prompt else ""
             scene_description = None
 
@@ -84,6 +85,7 @@ async def generate_image(session_id: int, body: GenerateImageRequest):
 
             yield _sse_event("phase", {"phase": "generating_image"})
             result = await generate_session_image(session_id, prompt, scene_description)
+            cleanup_image_generation()
             yield _sse_event("done", {"image": result})
         except Exception as exc:
             traceback.print_exc()
@@ -206,9 +208,8 @@ async def delete_image(image_id: int):
 
 @router.get("/api/settings/image-health")
 async def image_health() -> dict:
-    """Check image provider connectivity."""
-    config = await image_client.resolve_config()
-    return await image_client.health_check(config["base_url"], config["api_key"], config["model"])
+    """Check image provider availability (in-process mflux)."""
+    return image_health_check()
 
 
 async def _get_session_content(session_id: int) -> str | None:

@@ -31,6 +31,7 @@ class CampaignUpdate(BaseModel):
     language: str | None = None
     num_speakers: int | None = Field(default=None, ge=1, le=10)
     session_start_number: int | None = None
+    similarity_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
 
     @field_validator("language")
     @classmethod
@@ -139,6 +140,9 @@ async def update_campaign(campaign_id: int, body: CampaignUpdate) -> dict:
         if body.session_start_number is not None:
             fields.append("session_start_number = ?")
             values.append(body.session_start_number)
+        if body.similarity_threshold is not None:
+            fields.append("similarity_threshold = ?")
+            values.append(body.similarity_threshold)
 
         if fields:
             fields.append("updated_at = datetime('now')")

@@ -36,6 +36,7 @@ EXPECTED_TABLES: dict[str, list[tuple[str, str]]] = {
         ("language", "TEXT"),
         ("num_speakers", "INTEGER"),
         ("session_start_number", "INTEGER"),
+        ("similarity_threshold", "REAL"),
         ("created_at", "TEXT"),
         ("updated_at", "TEXT"),
     ],
@@ -707,3 +708,102 @@ class TestDefaultValues:
             "SELECT num_samples FROM voice_signatures WHERE id = ?", (vs_id,)
         )
         assert rows[0]["num_samples"] == 0
+
+    @pytest.mark.asyncio
+    async def test_campaign_default_similarity_threshold(
+        self, db: aiosqlite.Connection
+    ):
+        """Campaign similarity_threshold defaults to 0.75."""
+        cursor = await db.execute(
+            "INSERT INTO campaigns (name) VALUES (?)", ("Threshold Test",)
+        )
+        await db.commit()
+        cid = cursor.lastrowid
+
+        rows = await db.execute_fetchall(
+            "SELECT similarity_threshold FROM campaigns WHERE id = ?", (cid,)
+        )
+        assert rows[0]["similarity_threshold"] == 0.75
+
+
+# ===================================================================
+# 2.6 -- MLX pipeline migration tests
+# ===================================================================
+
+
+class TestMlxPipelineMigration:
+    """Verify MLX pipeline migrations: voice signature invalidation and new settings."""
+
+    @pytest.mark.asyncio
+    async def test_similarity_threshold_column_exists(self, db: aiosqlite.Connection):
+        """The similarity_threshold column must exist on campaigns table after migration."""
+        cols = await db.execute_fetchall("PRAGMA table_info(campaigns)")
+        col_names = [c["name"] for c in cols]
+        assert "similarity_threshold" in col_names
+
+    @pytest.mark.asyncio
+    async def test_similarity_threshold_column_type(self, db: aiosqlite.Connection):
+        """The similarity_threshold column must be REAL type."""
+        cols = await db.execute_fetchall("PRAGMA table_info(campaigns)")
+        threshold_col = [c for c in cols if c["name"] == "similarity_threshold"]
+        assert len(threshold_col) == 1
+        assert threshold_col[0]["type"] == "REAL"
+
+    @pytest.mark.asyncio
+    async def test_mlx_settings_defaults_exist(self, db: aiosqlite.Connection):
+        """Migration should insert default settings rows for MLX pipeline."""
+        rows = await db.execute_fetchall(
+            "SELECT key, value FROM settings WHERE key IN ('hf_token', 'whisper_batch_size', 'image_steps', 'image_guidance_scale') ORDER BY key"
+        )
+        settings = {r["key"]: r["value"] for r in rows}
+        assert "hf_token" in settings
+        assert "whisper_batch_size" in settings
+        assert "image_steps" in settings
+        assert "image_guidance_scale" in settings
+
+    @pytest.mark.asyncio
+    async def test_voice_signatures_empty_after_migration(self, tmp_path: Path):
+        """Migration must clear all voice signatures (incompatible embeddings).
+
+        Simulate a pre-migration database by removing the migration flag,
+        inserting voice signatures, then running init_db() to verify the
+        migration deletes them.
+        """
+        db_path = tmp_path / "migration_voicesig.db"
+
+        # Initialize the DB to get the full schema
+        with patch("talekeeper.db.connection.get_db_path", return_value=db_path):
+            await init_db()
+
+        # Remove the migration flag to simulate a pre-migration database,
+        # then insert a voice signature
+        async with aiosqlite.connect(db_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            await conn.execute(
+                "DELETE FROM settings WHERE key = '_migration_voice_sigs_invalidated'"
+            )
+            await conn.execute(
+                "INSERT INTO campaigns (name) VALUES ('MigTest')"
+            )
+            await conn.execute(
+                "INSERT INTO roster_entries (campaign_id, player_name, character_name) VALUES (1, 'P', 'C')"
+            )
+            await conn.execute(
+                "INSERT INTO voice_signatures (campaign_id, roster_entry_id, embedding) VALUES (1, 1, '[0.1]')"
+            )
+            await conn.commit()
+
+            # Verify the signature exists
+            rows = await conn.execute_fetchall("SELECT * FROM voice_signatures")
+            assert len(rows) == 1
+
+        # Run init_db() again — now the migration flag is absent, so it will
+        # run and clear voice signatures
+        with patch("talekeeper.db.connection.get_db_path", return_value=db_path):
+            await init_db()
+
+        # Verify voice signatures are cleared
+        async with aiosqlite.connect(db_path) as conn:
+            conn.row_factory = aiosqlite.Row
+            rows = await conn.execute_fetchall("SELECT * FROM voice_signatures")
+            assert len(rows) == 0, "Voice signatures should be cleared by migration"

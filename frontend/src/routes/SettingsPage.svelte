@@ -11,18 +11,26 @@
   let testingImage = $state(false);
   let imageResult = $state<string | null>(null);
 
-  const whisperModels = ['tiny', 'base', 'small', 'medium', 'large-v3'];
+  const whisperModels = [
+    { value: 'tiny', label: 'tiny', note: 'Fastest, lowest accuracy' },
+    { value: 'base', label: 'base', note: 'Fast, low accuracy' },
+    { value: 'small', label: 'small', note: 'Balanced speed/accuracy' },
+    { value: 'medium', label: 'medium', note: 'Good accuracy, slower' },
+    { value: 'distil-large-v3', label: 'distil-large-v3', note: 'Near-best accuracy, faster than large-v3 (Recommended)' },
+    { value: 'large-v3', label: 'large-v3', note: 'Best accuracy, slowest' },
+  ];
 
   async function load() {
     settings = await api.get<Record<string, string>>('/settings');
-    if (!settings.whisper_model) settings.whisper_model = 'medium';
+    if (!settings.whisper_model) settings.whisper_model = 'distil-large-v3';
     if (!settings.llm_base_url) settings.llm_base_url = '';
     if (!settings.llm_api_key) settings.llm_api_key = '';
     if (!settings.llm_model) settings.llm_model = '';
-    if (!settings.image_base_url) settings.image_base_url = '';
-    if (!settings.image_api_key) settings.image_api_key = '';
     if (!settings.image_model) settings.image_model = '';
-    if (!settings.live_transcription) settings.live_transcription = 'false';
+    if (!settings.image_steps) settings.image_steps = '4';
+    if (!settings.image_guidance_scale) settings.image_guidance_scale = '0';
+    if (!settings.hf_token) settings.hf_token = '';
+    if (!settings.whisper_batch_size) settings.whisper_batch_size = '';
     if (!settings.data_dir) settings.data_dir = '';
     pageLoading = false;
   }
@@ -51,10 +59,10 @@
     try {
       const status = await api.get<{ status: string; message?: string }>('/settings/image-health');
       imageResult = status.status === 'ok'
-        ? 'Connected! Image provider is reachable.'
+        ? 'Image engine is available.'
         : `Error: ${status.message}`;
     } catch {
-      imageResult = 'Cannot reach image provider. Check your settings.';
+      imageResult = 'Image engine unavailable. Check your installation.';
     } finally {
       testingImage = false;
     }
@@ -68,6 +76,13 @@
   async function browseDataDir() {
     const result = await api.post<{ path: string | null }>('/pick-directory');
     if (result.path) settings.data_dir = result.path;
+  }
+
+  async function resetDefaults() {
+    if (!confirm('Reset all settings to defaults? API keys and tokens will be preserved.')) return;
+    await api.post('/settings/reset');
+    await load();
+    showToast('Settings reset to defaults');
   }
 
   $effect(() => { load(); });
@@ -89,60 +104,78 @@
       Whisper Model
       <select bind:value={settings.whisper_model}>
         {#each whisperModels as m}
-          <option value={m}>{m}</option>
+          <option value={m.value}>{m.label} — {m.note}</option>
         {/each}
       </select>
     </label>
-    <label class="checkbox-label">
-      <input type="checkbox" checked={settings.live_transcription === 'true'} onchange={(e: Event) => { settings.live_transcription = (e.target as HTMLInputElement).checked ? 'true' : 'false'; }} />
-      Live transcription during recording
+    <label>
+      Batch Size
+      <input type="number" min="1" max="32" bind:value={settings.whisper_batch_size} placeholder="Auto-detected based on hardware" />
     </label>
-    <p class="hint">When enabled, preview segments appear during recording. These are preliminary — the final transcript may differ after full processing (improved accuracy, speaker labels, etc.).</p>
+    <p class="hint">Number of audio segments to process in parallel. Leave empty for automatic detection based on your Apple Silicon chip. Higher values use more memory but process faster.</p>
   </div>
 
   <div class="section">
-    <h3>LLM Provider</h3>
-    <p class="hint" style="margin-bottom: 0.75rem;">Configure any OpenAI-compatible provider. Leave fields empty to use defaults (Ollama at localhost:11434, model llama3.1:8b).</p>
-    <label>
-      Base URL
-      <input type="text" bind:value={settings.llm_base_url} placeholder="http://localhost:11434/v1" />
-    </label>
-    <label>
-      API Key
-      <input type="password" bind:value={settings.llm_api_key} placeholder="Not required for local providers" />
-    </label>
-    <label>
-      Model
-      <input type="text" bind:value={settings.llm_model} placeholder="llama3.1:8b" />
-    </label>
-    <div class="action-row">
-      <button class="btn" onclick={testLlm} disabled={testingLlm}>
-        {testingLlm ? 'Testing...' : 'Test Connection'}
-      </button>
-      {#if llmResult}
-        <span class="test-result">{llmResult}</span>
-      {/if}
+    <h3>Providers</h3>
+
+    <div class="provider-group">
+      <h4>HuggingFace</h4>
+      <p class="hint" style="margin-bottom: 0.75rem;">Required for speaker diarization. Create a free account at <a href="https://huggingface.co" target="_blank" rel="noopener">huggingface.co</a>, then generate an access token under <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">Settings &gt; Access Tokens</a>. You must also accept the <a href="https://huggingface.co/pyannote/speaker-diarization-3.1" target="_blank" rel="noopener">pyannote model license</a> before using diarization.</p>
+      <label>
+        Access Token
+        <input type="password" bind:value={settings.hf_token} placeholder="hf_..." />
+      </label>
+    </div>
+
+    <div class="provider-group">
+      <h4>LLM Provider</h4>
+      <p class="hint" style="margin-bottom: 0.75rem;">Configure any OpenAI-compatible provider. Leave fields empty to use defaults (Ollama at localhost:11434).</p>
+      <label>
+        Base URL
+        <input type="text" bind:value={settings.llm_base_url} placeholder="http://localhost:11434/v1" />
+      </label>
+      <label>
+        API Key
+        <input type="password" bind:value={settings.llm_api_key} placeholder="Not required for local providers" />
+      </label>
+      <label>
+        Model
+        <input type="text" bind:value={settings.llm_model} placeholder="llama3.1:8b" />
+      </label>
+      <p class="hint">Recommended models: <strong>llama3.1:8b</strong> (fast, good quality), <strong>mistral:7b</strong> (fast), <strong>llama3.1:70b</strong> (best quality, needs 48GB+ RAM). Ollama is auto-detected for optimized settings.</p>
+      <div class="action-row">
+        <button class="btn" onclick={testLlm} disabled={testingLlm}>
+          {testingLlm ? 'Testing...' : 'Test Connection'}
+        </button>
+        {#if llmResult}
+          <span class="test-result">{llmResult}</span>
+        {/if}
+      </div>
     </div>
   </div>
 
   <div class="section">
     <h3>Image Generation</h3>
-    <p class="hint" style="margin-bottom: 0.75rem;">Configure an OpenAI-compatible image generation provider. Leave fields empty to use defaults (Ollama at localhost:11434, model x/flux2-klein:9b). You can also use cloud providers like OpenAI (dall-e-3).</p>
-    <label>
-      Base URL
-      <input type="text" bind:value={settings.image_base_url} placeholder="http://localhost:11434/v1" />
-    </label>
-    <label>
-      API Key
-      <input type="password" bind:value={settings.image_api_key} placeholder="Not required for local providers" />
-    </label>
+    <p class="hint" style="margin-bottom: 0.75rem;">Images are generated locally using mflux (MLX-native FLUX). No external server required.</p>
     <label>
       Model
-      <input type="text" bind:value={settings.image_model} placeholder="x/flux2-klein:9b" />
+      <input type="text" bind:value={settings.image_model} placeholder="FLUX.2-Klein-4B-Distilled" />
     </label>
+    <p class="hint">Recommended: <strong>FLUX.2-Klein-4B-Distilled</strong> (fast, ~4GB). The model is downloaded automatically on first use.</p>
+    <div class="settings-row">
+      <label>
+        Steps
+        <input type="number" min="1" max="50" bind:value={settings.image_steps} placeholder="4" />
+      </label>
+      <label>
+        Guidance Scale
+        <input type="number" min="0" max="20" step="0.5" bind:value={settings.image_guidance_scale} placeholder="0" />
+      </label>
+    </div>
+    <p class="hint">Lower steps = faster generation. Default: 4 steps, 0 guidance scale (best for Klein distilled model).</p>
     <div class="action-row">
       <button class="btn" onclick={testImage} disabled={testingImage}>
-        {testingImage ? 'Testing...' : 'Test Connection'}
+        {testingImage ? 'Checking...' : 'Check Availability'}
       </button>
       {#if imageResult}
         <span class="test-result">{imageResult}</span>
@@ -189,6 +222,7 @@
   <div class="bottom-actions">
     <button class="btn btn-primary" onclick={save}>Save Settings</button>
     <button class="btn" onclick={() => wizard.show()}>Run Setup Wizard</button>
+    <button class="btn btn-danger" onclick={resetDefaults}>Reset to Defaults</button>
   </div>
 </div>
 {/if}
@@ -213,6 +247,23 @@
 
   .section h3 { margin: 0 0 0.75rem; }
 
+  .provider-group {
+    margin-bottom: 1.25rem;
+    padding-bottom: 1.25rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .provider-group:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+
+  .provider-group h4 {
+    margin: 0 0 0.25rem;
+    font-size: 0.9rem;
+  }
+
   label {
     display: block;
     margin-bottom: 0.75rem;
@@ -235,33 +286,37 @@
 
   select { cursor: pointer; }
 
-  .checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.85rem;
-    color: var(--text);
-    cursor: pointer;
-  }
-
-  .checkbox-label input[type="checkbox"] {
-    width: auto;
-    margin: 0;
-  }
-
   .hint {
     font-size: 0.8rem;
     color: var(--text-muted);
     margin: 0.25rem 0 0;
   }
 
+  .hint a {
+    color: var(--accent);
+  }
+
+  .hint strong {
+    color: var(--text-secondary);
+  }
+
   .action-row {
     display: flex;
     align-items: center;
     gap: 0.75rem;
+    margin-top: 0.5rem;
   }
 
   .test-result { font-size: 0.85rem; color: var(--text-secondary); }
+
+  .settings-row {
+    display: flex;
+    gap: 1rem;
+  }
+
+  .settings-row label {
+    flex: 1;
+  }
 
   .input-with-browse {
     display: flex;
@@ -309,4 +364,6 @@
   .btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn-primary:hover { background: var(--accent-hover); }
+  .btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .btn-danger:hover { opacity: 0.85; }
 </style>

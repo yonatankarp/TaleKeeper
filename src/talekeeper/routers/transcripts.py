@@ -16,7 +16,7 @@ router = APIRouter(tags=["transcripts"])
 
 
 class RetranscribeRequest(BaseModel):
-    model_size: str = "medium"
+    model_name: str | None = None
     language: str | None = None
     num_speakers: int | None = Field(default=None, ge=1, le=10)
 
@@ -89,7 +89,10 @@ async def retranscribe(session_id: int, body: RetranscribeRequest) -> StreamingR
                     (session_id,),
                 )
 
-            for item in transcribe_chunked(audio_path, model_size=body.model_size, language=language):
+            kwargs = {"language": language}
+            if body.model_name:
+                kwargs["model_name"] = body.model_name
+            for item in transcribe_chunked(audio_path, **kwargs):
                 if isinstance(item, ChunkProgress):
                     yield _sse_event("progress", {
                         "chunk": item.chunk,
@@ -110,15 +113,39 @@ async def retranscribe(session_id: int, body: RetranscribeRequest) -> StreamingR
                     })
                     segments_count += 1
 
-            # Run speaker diarization before marking complete
+            # Run speaker diarization with progress before marking complete
             from talekeeper.services.diarization import run_final_diarization
             from talekeeper.services.audio import webm_to_wav
+
+            yield _sse_event("phase", {"phase": "diarization"})
+
+            progress_events: list[str] = []
+
+            def _diarization_progress(stage: str, detail: dict) -> None:
+                if stage == "vad_start":
+                    progress_events.append(_sse_event("progress", {"detail": "Detecting speech activity..."}))
+                elif stage == "vad_done":
+                    n = detail["num_segments"]
+                    secs = int(detail["total_speech_seconds"])
+                    progress_events.append(_sse_event("progress", {"detail": f"Found {n} speech segments ({secs}s of speech)"}))
+                elif stage == "embeddings":
+                    cur, total = detail["current"], detail["total"]
+                    if cur % max(1, total // 20) == 0 or cur == total:
+                        progress_events.append(_sse_event("progress", {"detail": f"Extracting speaker embeddings ({cur}/{total})..."}))
+                elif stage == "clustering_done":
+                    ns = detail["num_speakers"]
+                    nseg = detail["num_segments"]
+                    progress_events.append(_sse_event("progress", {"detail": f"Found {ns} speakers, {nseg} segments"}))
+
             wav_path = webm_to_wav(audio_path)
             try:
-                await run_final_diarization(session_id, wav_path, num_speakers_override=num_speakers_override)
+                await run_final_diarization(session_id, wav_path, num_speakers_override=num_speakers_override, progress_callback=_diarization_progress)
             finally:
                 if wav_path.exists():
                     wav_path.unlink()
+
+            for evt in progress_events:
+                yield evt
 
             # Mark session as completed
             async with get_db() as db:

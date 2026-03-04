@@ -2,7 +2,7 @@
 
 ## The Scribe's Art
 
-TaleKeeper uses **Whisper**, an on-device speech recognition model, to transcribe your recordings. Everything runs locally — your audio never leaves your machine.
+TaleKeeper uses **Whisper**, an on-device speech recognition model running on Apple Silicon via MLX, to transcribe your recordings. Everything runs locally — your audio never leaves your machine.
 
 ### Viewing the Transcript
 
@@ -19,17 +19,21 @@ Each segment shows:
 !!! tip "Click to Seek"
     Click any transcript segment to jump to that moment in the audio player. Useful for reviewing specific moments.
 
-### Whisper Model Sizes
+### Whisper Models
 
-The model size affects speed and accuracy. Configure it in **Settings**.
+The model affects speed and accuracy. Configure it in **Settings**.
 
 | Model | Speed | Accuracy | Best For |
 |-------|-------|----------|----------|
-| `tiny` | Fastest | Lower | Quick previews, testing |
-| `base` | Fast | Fair | Short sessions |
-| `small` | Moderate | Good | Most sessions |
-| **`medium`** | Slower | **Very Good** | **Recommended default** |
-| `large-v3` | Slowest | Best | Critical recordings, accented speech |
+| `tiny` | ~30 sec / 10 min audio | Lower | Quick previews, testing |
+| `base` | ~1 min / 10 min audio | Fair | Short sessions |
+| `small` | ~2 min / 10 min audio | Good | Most sessions |
+| `medium` | ~3 min / 10 min audio | Very Good | Balanced option |
+| **`distil-large-v3`** | ~2 min / 10 min audio | **Excellent** | **Recommended default** |
+| `large-v3` | ~5 min / 10 min audio | Best | Critical recordings, accented speech |
+
+!!! info "VAD Pre-Pass"
+    Before transcription begins, TaleKeeper runs Voice Activity Detection (VAD) to identify and skip non-speech segments like silence, music, or background noise. This makes transcription faster and more accurate.
 
 !!! info "Long Sessions"
     For recordings over 5 minutes, TaleKeeper automatically splits audio into chunks with overlapping segments to ensure nothing is missed at boundaries. You don't need to do anything — it's handled transparently.

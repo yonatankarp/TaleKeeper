@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { api, mergeSpeakers, uploadAudio, generateImageStream, reDiarize, processAudio } from './api';
+import { api, mergeSpeakers, uploadAudio, generateImageStream, reDiarize, processAudio, processAll } from './api';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -500,5 +500,129 @@ describe('processAudio', () => {
     await flushAsync();
 
     expect(onError).toHaveBeenCalledWith('Session not found');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 12.4 - processAll
+// ---------------------------------------------------------------------------
+
+describe('processAll', () => {
+  it('calls onPhase, onProgress, and onDone from SSE events', async () => {
+    const ssePayload = [
+      'event: phase',
+      'data: {"phase":"transcription"}',
+      '',
+      'event: progress',
+      'data: {"chunk":1,"total_chunks":2}',
+      '',
+      'event: phase',
+      'data: {"phase":"diarization"}',
+      '',
+      'event: phase',
+      'data: {"phase":"summaries"}',
+      '',
+      'event: phase',
+      'data: {"phase":"image_generation"}',
+      '',
+      'event: done',
+      'data: {"segments_count":5,"summaries_count":2,"image":{"id":1}}',
+      '',
+    ].join('\n');
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      body: createSSEStream(ssePayload),
+    });
+
+    const onPhase = vi.fn();
+    const onProgress = vi.fn();
+    const onDone = vi.fn();
+    const onError = vi.fn();
+
+    processAll(3, { onPhase, onProgress, onDone, onError });
+    await flushAsync();
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/sessions/3/process-all', {
+      method: 'POST',
+    });
+
+    expect(onPhase).toHaveBeenCalledTimes(4);
+    expect(onPhase).toHaveBeenCalledWith('transcription');
+    expect(onPhase).toHaveBeenCalledWith('diarization');
+    expect(onPhase).toHaveBeenCalledWith('summaries');
+    expect(onPhase).toHaveBeenCalledWith('image_generation');
+
+    expect(onProgress).toHaveBeenCalledTimes(1);
+    expect(onProgress).toHaveBeenCalledWith(1, 2);
+
+    expect(onDone).toHaveBeenCalledWith({
+      segments_count: 5,
+      summaries_count: 2,
+      image: { id: 1 },
+    });
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('passes numSpeakers as query parameter', async () => {
+    const ssePayload = [
+      'event: done',
+      'data: {"segments_count":0,"summaries_count":0,"image":null}',
+      '',
+    ].join('\n');
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      body: createSSEStream(ssePayload),
+    });
+
+    const onDone = vi.fn();
+    processAll(3, { onPhase: vi.fn(), onDone, onError: vi.fn() }, 4);
+    await flushAsync();
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/sessions/3/process-all?num_speakers=4', {
+      method: 'POST',
+    });
+  });
+
+  it('calls onError on SSE error event', async () => {
+    const ssePayload = [
+      'event: phase',
+      'data: {"phase":"transcription"}',
+      '',
+      'event: error',
+      'data: {"message":"Transcription model failed"}',
+      '',
+    ].join('\n');
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      body: createSSEStream(ssePayload),
+    });
+
+    const onPhase = vi.fn();
+    const onDone = vi.fn();
+    const onError = vi.fn();
+
+    processAll(3, { onPhase, onDone, onError });
+    await flushAsync();
+
+    expect(onPhase).toHaveBeenCalledWith('transcription');
+    expect(onError).toHaveBeenCalledWith('Transcription model failed');
+    expect(onDone).not.toHaveBeenCalled();
+  });
+
+  it('calls onError when fetch response is not ok', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      statusText: 'Bad Request',
+      json: () => Promise.resolve({ detail: 'No audio for this session' }),
+    });
+
+    const onError = vi.fn();
+    processAll(99, { onPhase: vi.fn(), onDone: vi.fn(), onError });
+    await flushAsync();
+
+    expect(onError).toHaveBeenCalledWith('No audio for this session');
   });
 });

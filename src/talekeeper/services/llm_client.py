@@ -3,6 +3,7 @@
 import logging
 import os
 
+import httpx
 from openai import AsyncOpenAI, APIConnectionError, AuthenticationError, NotFoundError
 
 from talekeeper.db import get_db
@@ -12,9 +13,14 @@ logger = logging.getLogger(__name__)
 DEFAULT_BASE_URL = "http://localhost:11434/v1"
 DEFAULT_MODEL = "llama3.1:8b"
 
+# Cache Ollama detection results per base_url
+_ollama_cache: dict[str, bool] = {}
+
 
 async def resolve_config() -> dict:
     """Resolve LLM configuration: settings table > env vars > defaults."""
+    from talekeeper.routers.settings import SENSITIVE_KEYS, _decrypt
+
     settings: dict[str, str] = {}
     try:
         async with get_db() as db:
@@ -23,7 +29,10 @@ async def resolve_config() -> dict:
             )
             for r in rows:
                 if r["value"]:
-                    settings[r["key"]] = r["value"]
+                    value = r["value"]
+                    if r["key"] in SENSITIVE_KEYS:
+                        value = _decrypt(value)
+                    settings[r["key"]] = value
     except Exception:
         pass
 
@@ -75,6 +84,34 @@ async def health_check(base_url: str, api_key: str | None, model: str) -> dict:
         return {"status": "error", "message": str(e)}
 
 
+async def _is_ollama(base_url: str) -> bool:
+    """Detect if the given base_url points to an Ollama server.
+
+    Strips '/v1' suffix and probes '/api/tags'. Results are cached per base_url.
+    """
+    if base_url in _ollama_cache:
+        return _ollama_cache[base_url]
+
+    # Strip /v1 suffix to get the Ollama root
+    ollama_root = base_url.rstrip("/")
+    if ollama_root.endswith("/v1"):
+        ollama_root = ollama_root[:-3]
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{ollama_root}/api/tags")
+            if resp.status_code == 200:
+                data = resp.json()
+                is_ollama = isinstance(data.get("models"), list)
+                _ollama_cache[base_url] = is_ollama
+                return is_ollama
+    except Exception:
+        pass
+
+    _ollama_cache[base_url] = False
+    return False
+
+
 async def generate(base_url: str, api_key: str | None, model: str, prompt: str, system: str = "") -> str:
     """Generate text using the OpenAI Chat Completions API."""
     client = AsyncOpenAI(
@@ -87,8 +124,33 @@ async def generate(base_url: str, api_key: str | None, model: str, prompt: str, 
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
+    kwargs: dict = {}
+    if await _is_ollama(base_url):
+        kwargs["extra_body"] = {"options": {"num_ctx": 32768}}
+
     response = await client.chat.completions.create(
         model=model,
         messages=messages,
+        **kwargs,
     )
     return response.choices[0].message.content or ""
+
+
+async def unload_model(base_url: str, api_key: str | None, model: str) -> None:
+    """Unload a model from Ollama by sending keep_alive: 0. No-op for non-Ollama providers."""
+    if not await _is_ollama(base_url):
+        return
+
+    ollama_root = base_url.rstrip("/")
+    if ollama_root.endswith("/v1"):
+        ollama_root = ollama_root[:-3]
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(
+                f"{ollama_root}/api/generate",
+                json={"model": model, "keep_alive": "0"},
+            )
+        logger.info("Sent keep_alive=0 to Ollama for model %s", model)
+    except Exception as e:
+        logger.warning("Failed to unload Ollama model %s: %s", model, e)

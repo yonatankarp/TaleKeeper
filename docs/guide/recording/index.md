@@ -28,24 +28,29 @@ You can:
 - **Pause** — temporarily halt recording, then **Resume**
 - **Stop** — end the recording and begin processing
 
-!!! tip "Hidden Feature: Live Transcription"
-    Enable **live transcription** in Settings to see preview transcript segments appear in real time as you record. These are preliminary — the final transcript will be more accurate with proper speaker labels.
-
 ### After Stopping
 
 When you stop recording, TaleKeeper automatically:
 
 1. Merges audio chunks into a single file
 2. Converts to the format needed for transcription
-3. Runs speech-to-text (Whisper)
-4. Runs speaker diarization (identifies who spoke when)
-5. Generates an AI session name (if an LLM is configured)
+3. Runs VAD (Voice Activity Detection) to filter non-speech audio
+4. Runs speech-to-text (Whisper)
+5. Runs speaker diarization (identifies who spoke when)
+6. Generates an AI session name (if an LLM is configured)
 
 A progress bar shows the current phase:
 
 - **"Uploading..."** — finalizing audio
 - **"Transcribing X / Y chunks — ~N min remaining"** — speech recognition in progress
 - **"Assigning speakers..."** — diarization running
+
+### Process All
+
+!!! tip "Hidden Feature: One-Click Full Pipeline"
+    After recording and processing are complete, a **Process All** button appears. Click it to run the entire pipeline in sequence: transcription → diarization → summaries → image generation. Progress phases light up as each step completes, and a final summary shows how many segments, summaries, and images were created.
+
+    Process All is available when a session has audio (`audio_ready` or `completed` status) and no other processing is running.
 
 !!! tip "Hidden Feature: Speaker Count Override"
     You can adjust the speaker count right before stopping — useful if unexpected guests joined or someone left early.

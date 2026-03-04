@@ -7,11 +7,11 @@ Enable per-speaker voice profile storage and matching at the campaign level, all
 ## Requirements
 
 ### Requirement: Voice signature extraction from labeled sessions
-The system SHALL extract voice signatures from sessions where speakers have been manually assigned to campaign roster entries. For each roster-linked speaker, the system SHALL compute an averaged, L2-normalized embedding from all transcript segments assigned to that speaker. The extraction SHALL reuse the existing ECAPA-TDNN encoder.
+The system SHALL extract voice signatures from sessions where speakers have been manually assigned to campaign roster entries. For each roster-linked speaker, the system SHALL compute an averaged, L2-normalized 192-dimensional embedding from all transcript segments assigned to that speaker using pyannote's embedding model (`pyannote/embedding`).
 
 #### Scenario: Extract signatures from a fully labeled session
 - **WHEN** a session has audio, transcript segments, and at least one speaker assigned to a roster entry, and the user triggers "Generate Voice Signatures"
-- **THEN** the system extracts windowed embeddings from each labeled speaker's segments, averages them into one embedding per speaker, normalizes it, and stores it as a voice signature linked to the roster entry
+- **THEN** the system extracts embeddings from each labeled speaker's segments using pyannote's embedding model, averages them into one 192-dim embedding per speaker, normalizes it, and stores it as a voice signature linked to the roster entry
 
 #### Scenario: Partial labeling
 - **WHEN** a session has 4 detected speakers but only 2 are assigned to roster entries
@@ -33,19 +33,19 @@ The system SHALL store voice signatures at the campaign level, linked to roster 
 - **THEN** the associated voice signature is also deleted (CASCADE)
 
 ### Requirement: Signature-based speaker matching during diarization
-The system SHALL use stored voice signatures as the primary speaker identification method when signatures exist for the session's campaign. For each audio window, the system SHALL compute cosine similarity against all campaign signatures and assign the window to the closest matching speaker above a minimum similarity threshold.
+The system SHALL use stored voice signatures as the primary speaker identification method when signatures exist for the session's campaign. For each audio segment, the system SHALL compute cosine similarity against all campaign signatures and assign the segment to the closest matching speaker above the campaign's configured similarity threshold.
 
 #### Scenario: Diarization with signatures available
 - **WHEN** a session is diarized and the campaign has voice signatures for 4 roster entries
-- **THEN** each audio window is compared against all 4 signatures and assigned to the best match above the similarity threshold
+- **THEN** each audio segment is compared against all 4 signatures and assigned to the best match above the campaign's similarity threshold
 
 #### Scenario: Audio window below similarity threshold
-- **WHEN** an audio window's highest cosine similarity to any stored signature is below the minimum threshold
-- **THEN** that window is labeled as "Unknown Speaker"
+- **WHEN** an audio segment's highest cosine similarity to any stored signature is below the campaign's configured similarity threshold
+- **THEN** that segment is labeled as "Unknown Speaker"
 
 #### Scenario: Fallback to clustering when no signatures exist
 - **WHEN** a session is diarized and the campaign has no voice signatures
-- **THEN** the system falls back to unsupervised agglomerative clustering
+- **THEN** the system falls back to pyannote's built-in clustering
 
 ### Requirement: Voice signature management API
 The system SHALL provide API endpoints to generate voice signatures from a session and to list existing signatures for a campaign.
@@ -76,3 +76,30 @@ The system SHALL display a "Generate Voice Signatures" button in the speaker pan
 #### Scenario: Signature status indicators
 - **WHEN** the speaker panel is displayed for a session in a campaign with voice signatures
 - **THEN** each speaker linked to a roster entry with a signature shows a visual indicator (e.g., icon or badge) confirming a voice signature exists
+
+### Requirement: Automatic signature invalidation on engine upgrade
+The system SHALL automatically delete all voice signature data from the database when the embedding model changes in a way that makes existing embeddings incompatible. The invalidation SHALL run as a database migration during application startup.
+
+#### Scenario: Signatures cleared on upgrade
+- **WHEN** the application starts after upgrading from speechbrain to pyannote embeddings
+- **THEN** all rows in the `voice_signatures` table are deleted
+- **AND** users must re-enroll their players by generating new voice signatures
+
+#### Scenario: UI indicates re-enrollment needed
+- **WHEN** a campaign previously had voice signatures that were invalidated
+- **THEN** the voice signature status indicators show that no signatures exist, prompting re-enrollment
+
+### Requirement: Configurable similarity threshold
+The system SHALL allow the DM to configure the cosine similarity threshold for voice signature matching on a per-campaign basis. The threshold SHALL be stored as a column on the `campaigns` table with a default value. The threshold SHALL be used by the `diarize_with_signatures` function instead of a hardcoded constant.
+
+#### Scenario: Default threshold applied
+- **WHEN** a campaign has no custom similarity threshold configured
+- **THEN** voice signature matching uses the default threshold value
+
+#### Scenario: Custom threshold per campaign
+- **WHEN** the DM sets the similarity threshold to 0.8 for a specific campaign
+- **THEN** voice signature matching for that campaign uses 0.8, while other campaigns use their own configured threshold
+
+#### Scenario: Threshold editable in campaign settings
+- **WHEN** the DM opens campaign settings
+- **THEN** a "Voice Signature Confidence" slider or input field is available to adjust the similarity threshold

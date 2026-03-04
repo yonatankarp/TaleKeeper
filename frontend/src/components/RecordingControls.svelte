@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, uploadAudio, processAudio } from '../lib/api';
+  import { api, uploadAudio, processAudio, processAll, type ProcessAllResult } from '../lib/api';
 
   type Props = {
     sessionId: number;
@@ -42,9 +42,22 @@
   let now = $state(Date.now());
   let etaInterval: ReturnType<typeof setInterval> | null = null;
 
+  // Pipeline (Process All) state
+  let pipelineRunning = $state(false);
+  let pipelinePhase = $state<string | null>(null);
+  let pipelineResult = $state<ProcessAllResult | null>(null);
+  let pipelineCanceller: { cancel: () => void } | null = null;
+
+  const phaseLabels: Record<string, string> = {
+    transcription: 'Transcribing audio...',
+    diarization: 'Assigning speakers...',
+    summaries: 'Generating summaries...',
+    image_generation: 'Creating session art...',
+  };
+
   // Tick `now` every second while processing for live ETA updates
   $effect(() => {
-    if (processing && chunkProgress) {
+    if ((processing || pipelineRunning) && (chunkProgress || pipelinePhase)) {
       etaInterval = setInterval(() => { now = Date.now(); }, 1000);
       return () => { if (etaInterval) { clearInterval(etaInterval); etaInterval = null; } };
     }
@@ -338,10 +351,63 @@
     }
   }
 
-  let busy = $derived(uploading || processing);
+  // Process All pipeline
+  function startProcessAll() {
+    error = null;
+    pipelineRunning = true;
+    pipelinePhase = null;
+    pipelineResult = null;
+    chunkProgress = null;
+    processingStartTime = Date.now();
+
+    pipelineCanceller = processAll(
+      sessionId,
+      {
+        onPhase: (p) => {
+          pipelinePhase = p;
+          // Reset chunk progress when entering a new phase
+          if (p !== 'transcription') {
+            chunkProgress = null;
+          }
+        },
+        onProgress: (chunk, total) => {
+          chunkProgress = { chunk, total };
+        },
+        onDone: (result) => {
+          pipelineRunning = false;
+          pipelinePhase = null;
+          chunkProgress = null;
+          processingStartTime = null;
+          pipelineResult = result;
+          pipelineCanceller = null;
+          onStatusChange();
+        },
+        onError: (message) => {
+          error = message;
+          pipelineRunning = false;
+          pipelinePhase = null;
+          chunkProgress = null;
+          processingStartTime = null;
+          pipelineCanceller = null;
+          onStatusChange();
+        },
+      },
+      numSpeakers,
+    );
+  }
+
+  function dismissPipelineResult() {
+    pipelineResult = null;
+  }
+
+  let busy = $derived(uploading || processing || pipelineRunning);
   let canRecord = $derived((status === 'draft' || status === 'recording') && !busy);
   let canUpload = $derived((status === 'draft' || status === 'completed') && !busy && recordingState === 'idle');
+  let canProcessAll = $derived(
+    (status === 'audio_ready' || status === 'completed') && !busy && recordingState === 'idle'
+  );
   let isLocked = $derived(isRecordingLocked());
+  let hasAudio = $derived(status !== 'draft');
 </script>
 
 <div class="recording-controls">
@@ -387,6 +453,46 @@
     </div>
   {/if}
 
+  {#if pipelineRunning}
+    <div class="processing-banner pipeline-banner">
+      <div class="pipeline-header">
+        <span class="processing-dot"></span>
+        <strong>Processing All</strong> — {phaseLabels[pipelinePhase ?? ''] ?? 'Starting...'}
+      </div>
+      {#if pipelinePhase === 'transcription' && chunkProgress}
+        <div class="progress-section">
+          <div class="progress-bar">
+            <div class="progress-fill" style="width: {progressPercent}%"></div>
+          </div>
+          <span class="progress-label">
+            {chunkProgress.chunk} / {chunkProgress.total} chunks{etaText ? ` — ${etaText}` : ''}
+          </span>
+        </div>
+      {/if}
+      <div class="pipeline-phases">
+        {#each ['transcription', 'diarization', 'summaries', 'image_generation'] as p}
+          <span class="phase-indicator" class:active={pipelinePhase === p} class:done={
+            pipelinePhase != null && ['transcription', 'diarization', 'summaries', 'image_generation'].indexOf(p) < ['transcription', 'diarization', 'summaries', 'image_generation'].indexOf(pipelinePhase)
+          }>
+            {phaseLabels[p]?.replace('...', '') ?? p}
+          </span>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
+  {#if pipelineResult}
+    <div class="pipeline-summary">
+      <strong>Pipeline Complete</strong>
+      <div class="summary-stats">
+        <span>{pipelineResult.segments_count} transcript segments</span>
+        <span>{pipelineResult.summaries_count} summaries generated</span>
+        <span>{pipelineResult.image ? 'Session art created' : 'No image generated'}</span>
+      </div>
+      <button class="btn btn-sm" onclick={dismissPipelineResult}>Dismiss</button>
+    </div>
+  {/if}
+
   <input
     type="file"
     accept="audio/*"
@@ -396,7 +502,7 @@
   />
 
   <label class="speakers-label">Speakers
-    <input type="number" min="1" max="10" bind:value={numSpeakers} class="speakers-input" />
+    <input type="number" min="1" max="10" bind:value={numSpeakers} class="speakers-input" disabled={busy} />
   </label>
 
   <div class="controls">
@@ -407,6 +513,11 @@
       <button class="btn" onclick={triggerFileInput} disabled={!canUpload || isLocked}>
         Upload Audio
       </button>
+      {#if hasAudio && canProcessAll}
+        <button class="btn btn-process-all" onclick={startProcessAll}>
+          Process All
+        </button>
+      {/if}
       {#if isLocked}
         <span class="lock-msg">Another session is recording</span>
       {/if}
@@ -495,6 +606,17 @@
   .btn-record { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn-record:hover:not(:disabled) { background: var(--accent-hover); }
   .btn-stop { background: var(--badge-dark); }
+  .btn-sm { padding: 0.3rem 0.75rem; font-size: 0.8rem; }
+
+  .btn-process-all {
+    background: var(--success);
+    border-color: var(--success);
+    color: #fff;
+  }
+
+  .btn-process-all:hover:not(:disabled) {
+    filter: brightness(1.1);
+  }
 
   .lock-msg {
     color: var(--text-muted);
@@ -517,6 +639,43 @@
     margin-bottom: 1rem;
     font-size: 0.85rem;
     color: var(--text-muted);
+  }
+
+  .pipeline-banner {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .pipeline-header {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+
+  .pipeline-phases {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .phase-indicator {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 12px;
+    background: var(--bg-hover);
+    color: var(--text-muted);
+  }
+
+  .phase-indicator.active {
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+  }
+
+  .phase-indicator.done {
+    background: var(--success);
+    color: #fff;
   }
 
   .processing-dot {
@@ -578,5 +737,25 @@
     color: var(--text);
     font-size: 0.85rem;
     text-align: center;
+  }
+
+  .pipeline-summary {
+    background: var(--bg-surface);
+    border: 1px solid var(--success);
+    border-radius: 6px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .pipeline-summary strong {
+    color: var(--success);
+  }
+
+  .summary-stats {
+    display: flex;
+    gap: 1.5rem;
+    margin: 0.5rem 0;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
   }
 </style>
