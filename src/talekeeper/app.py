@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 # Configure logging for talekeeper services so INFO messages are visible
-logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s:%(name)s: %(message)s", datefmt="%H:%M:%S")
 logging.getLogger("talekeeper").setLevel(logging.INFO)
 
 from fastapi import FastAPI

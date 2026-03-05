@@ -288,6 +288,12 @@ async def re_diarize(session_id: int, body: ReDiarizeRequest) -> StreamingRespon
                     n = detail["num_segments"]
                     secs = int(detail["total_speech_seconds"])
                     progress_events.append(_sse_event("progress", {"detail": f"Found {n} speech segments ({secs}s of speech)"}))
+                elif stage == "change_detection_start":
+                    progress_events.append(_sse_event("progress", {"detail": "Detecting speaker changes..."}))
+                elif stage == "change_detection_done":
+                    n = detail["num_segments_processed"]
+                    c = detail["num_changes_found"]
+                    progress_events.append(_sse_event("progress", {"detail": f"Found {c} speaker changes in {n} segments"}))
                 elif stage == "embeddings":
                     cur, total = detail["current"], detail["total"]
                     if cur % max(1, total // 20) == 0 or cur == total:

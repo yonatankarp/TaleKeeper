@@ -22,6 +22,13 @@ MIN_SEGMENT_DURATION = 0.4
 EMBEDDING_WINDOW = 1.2
 EMBEDDING_STEP = 0.6
 
+# Speaker change detection constants
+MIN_CHANGE_DETECTION_DURATION = 2.0
+CHANGE_DETECTION_WINDOW = 0.6
+CHANGE_DETECTION_STEP = 0.3
+CHANGE_DETECTION_THRESHOLD = 0.4
+CHANGE_DETECTION_MIN_SPLIT_GAP = 3
+
 
 @dataclass
 class SpeakerSegment:
@@ -64,6 +71,319 @@ async def _resolve_hf_token() -> str:
 def unload_models() -> None:
     """No-op — diarize library manages its own model lifecycle. Just gc.collect()."""
     gc.collect()
+
+
+def _compress_dynamic_range(
+    audio: np.ndarray,
+    sr: int,
+    target_rms: float = 0.1,
+    window_sec: float = 0.2,
+    step_sec: float = 0.1,
+) -> np.ndarray:
+    """Apply sliding-window dynamic range compression.
+
+    Quiet speakers far from the mic are inaudible to VAD because loud speakers
+    dominate the overall level. This compressor normalizes each short window
+    independently so quiet sections are boosted without clipping loud ones.
+
+    Args:
+        audio: 1-D float waveform.
+        sr: Sample rate.
+        target_rms: Desired RMS per window (default 0.1).
+        window_sec: Window length in seconds.
+        step_sec: Hop between windows in seconds.
+
+    Returns:
+        Compressed and clipped audio array.
+    """
+    win_samples = int(window_sec * sr)
+    step_samples = int(step_sec * sr)
+
+    output = np.zeros(len(audio), dtype=np.float64)
+    weight = np.zeros(len(audio), dtype=np.float64)
+    window = np.hanning(win_samples)
+
+    pos = 0
+    while pos + win_samples <= len(audio):
+        chunk = audio[pos:pos + win_samples]
+        rms = float(np.sqrt(np.mean(chunk ** 2)))
+        scale = target_rms / rms if rms > 1e-6 else 1.0
+        output[pos:pos + win_samples] += chunk * scale * window
+        weight[pos:pos + win_samples] += window
+        pos += step_samples
+
+    mask = weight > 1e-8
+    output[mask] /= weight[mask]
+    return np.clip(output, -1.0, 1.0)
+
+
+def _normalize_audio_file(wav_path: Path) -> Path:
+    """Write a dynamically-compressed copy of a WAV file to a temp file.
+
+    Uses sliding-window compression so that quiet speakers (far from the mic)
+    are boosted independently of loud speakers before VAD and segmentation.
+
+    Args:
+        wav_path: Path to the original WAV file.
+
+    Returns:
+        Path to the compressed temp WAV file. Caller must delete it when done.
+    """
+    audio, sr = sf.read(str(wav_path))
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)
+
+    compressed = _compress_dynamic_range(audio, sr)
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    sf.write(tmp.name, compressed, sr)
+    tmp.close()
+    logger.debug("Wrote compressed audio to %s", tmp.name)
+    return Path(tmp.name)
+
+
+def _normalize_segment_audio(
+    audio: np.ndarray, target_rms: float = 0.1
+) -> np.ndarray:
+    """Normalize audio segment to target RMS loudness for consistent embeddings.
+
+    Quiet speakers far from the mic produce low-amplitude segments whose
+    WeSpeaker embeddings are poor quality. RMS normalization equalizes loudness
+    so all speakers produce equally strong embeddings.
+
+    Args:
+        audio: 1-D float waveform.
+        target_rms: Desired RMS amplitude (default 0.1).
+
+    Returns:
+        Normalized and clipped audio array.
+    """
+    rms = float(np.sqrt(np.mean(audio ** 2)))
+    if rms < 1e-6:
+        return audio
+    scale = target_rms / rms
+    return np.clip(audio * scale, -1.0, 1.0)
+
+
+def _extract_fine_stride_embeddings(
+    audio_data: np.ndarray,
+    sr: int,
+    seg_start: float,
+    seg_end: float,
+) -> tuple[np.ndarray, list[float]]:
+    """Extract WeSpeaker embeddings at fine stride for speaker change detection.
+
+    Args:
+        audio_data: Full audio waveform (mono).
+        sr: Sample rate.
+        seg_start: Segment start time in seconds.
+        seg_end: Segment end time in seconds.
+
+    Returns:
+        (embeddings, timestamps) where embeddings is (N, 256) ndarray and
+        timestamps is a list of window center times.
+    """
+    import wespeakerruntime
+
+    model = wespeakerruntime.Speaker(lang="en")
+
+    embeddings: list[np.ndarray] = []
+    timestamps: list[float] = []
+
+    win_start = seg_start
+    while win_start + CHANGE_DETECTION_WINDOW <= seg_end + 1e-6:
+        win_end = min(win_start + CHANGE_DETECTION_WINDOW, seg_end)
+        if win_end - win_start < MIN_SEGMENT_DURATION:
+            break
+
+        start_sample = int(win_start * sr)
+        end_sample = int(win_end * sr)
+        segment_audio = audio_data[start_sample:end_sample]
+        segment_audio = _normalize_segment_audio(segment_audio)
+
+        tmp_path: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                tmp_path = tmp.name
+                sf.write(tmp_path, segment_audio, sr)
+            emb = model.extract_embedding(tmp_path)
+        except Exception:
+            logger.debug("Fine-stride embedding failed for window %.2f-%.2f", win_start, win_end)
+            win_start += CHANGE_DETECTION_STEP
+            continue
+        finally:
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+        if emb is not None:
+            if emb.ndim == 2:
+                emb = emb[0]
+            embeddings.append(emb)
+            timestamps.append((win_start + win_end) / 2.0)
+
+        win_start += CHANGE_DETECTION_STEP
+
+    if not embeddings:
+        return np.empty((0, 256), dtype=np.float32), []
+
+    return np.stack(embeddings), timestamps
+
+
+def _find_speaker_change_points(
+    embeddings: np.ndarray,
+    timestamps: list[float],
+) -> list[float]:
+    """Find speaker change points using cosine distance peaks between consecutive embeddings.
+
+    Args:
+        embeddings: (N, 256) ndarray of fine-stride embeddings.
+        timestamps: List of window center times corresponding to each embedding.
+
+    Returns:
+        List of timestamps where speaker changes are detected.
+    """
+    from scipy.signal import find_peaks
+    from scipy.spatial.distance import cosine
+
+    if len(embeddings) < 2:
+        return []
+
+    # Compute cosine distance between consecutive embeddings
+    distances = []
+    for i in range(len(embeddings) - 1):
+        distances.append(cosine(embeddings[i], embeddings[i + 1]))
+
+    distances_arr = np.array(distances)
+
+    peaks, _ = find_peaks(
+        distances_arr,
+        height=CHANGE_DETECTION_THRESHOLD,
+        distance=CHANGE_DETECTION_MIN_SPLIT_GAP,
+    )
+
+    # Map peak indices to timestamps (midpoint between consecutive windows)
+    change_times = []
+    for peak_idx in peaks:
+        change_times.append((timestamps[peak_idx] + timestamps[peak_idx + 1]) / 2.0)
+
+    return change_times
+
+
+def _split_segment_at_changes(
+    seg_start: float,
+    seg_end: float,
+    change_times: list[float],
+) -> list[tuple[float, float]]:
+    """Split a segment at detected change points, merging short sub-segments.
+
+    Args:
+        seg_start: Original segment start time.
+        seg_end: Original segment end time.
+        change_times: List of split timestamps within the segment.
+
+    Returns:
+        List of (start, end) tuples for sub-segments.
+    """
+    if not change_times:
+        return [(seg_start, seg_end)]
+
+    # Build sub-segments
+    boundaries = [seg_start] + sorted(change_times) + [seg_end]
+    sub_segments = []
+    for i in range(len(boundaries) - 1):
+        sub_segments.append((boundaries[i], boundaries[i + 1]))
+
+    # Merge sub-segments shorter than MIN_SEGMENT_DURATION with neighbor
+    merged = []
+    for start, end in sub_segments:
+        if end - start < MIN_SEGMENT_DURATION and merged:
+            # Merge with previous
+            prev_start, _prev_end = merged[-1]
+            merged[-1] = (prev_start, end)
+        else:
+            merged.append((start, end))
+
+    # Check if first segment is too short after merging
+    if len(merged) > 1 and merged[0][1] - merged[0][0] < MIN_SEGMENT_DURATION:
+        second = merged[1]
+        merged = [(merged[0][0], second[1])] + merged[2:]
+
+    return merged
+
+
+def _detect_speaker_changes(
+    audio_path: Path,
+    speech_segments: list,
+    progress_callback: ProgressCallback | None = None,
+) -> list:
+    """Detect speaker changes within long VAD segments and split them.
+
+    For segments longer than MIN_CHANGE_DETECTION_DURATION, extracts fine-stride
+    embeddings and detects speaker change points. Short segments pass through unchanged.
+
+    Args:
+        audio_path: Path to WAV file.
+        speech_segments: List of SpeechSegment objects from run_vad().
+        progress_callback: Optional callback for progress reporting.
+
+    Returns:
+        Refined list of segment-like objects (with .start and .end attributes).
+    """
+    long_segments = [s for s in speech_segments if s.end - s.start > MIN_CHANGE_DETECTION_DURATION]
+
+    if not long_segments:
+        return speech_segments
+
+    if progress_callback:
+        progress_callback("change_detection_start", {})
+
+    audio_data, sr = sf.read(str(audio_path))
+    if audio_data.ndim > 1:
+        audio_data = audio_data.mean(axis=1)
+
+    @dataclass
+    class SubSegment:
+        start: float
+        end: float
+
+    refined: list = []
+    total_changes = 0
+
+    for seg in speech_segments:
+        if seg.end - seg.start <= MIN_CHANGE_DETECTION_DURATION:
+            refined.append(seg)
+            continue
+
+        embeddings, timestamps = _extract_fine_stride_embeddings(
+            audio_data, sr, seg.start, seg.end
+        )
+
+        change_times = _find_speaker_change_points(embeddings, timestamps)
+        total_changes += len(change_times)
+
+        if not change_times:
+            refined.append(seg)
+            continue
+
+        sub_segs = _split_segment_at_changes(seg.start, seg.end, change_times)
+        for start, end in sub_segs:
+            refined.append(SubSegment(start=start, end=end))
+
+    if progress_callback:
+        progress_callback("change_detection_done", {
+            "num_segments_processed": len(long_segments),
+            "num_changes_found": total_changes,
+        })
+
+    logger.info(
+        "Speaker change detection: processed %d long segments, found %d change points, %d -> %d segments",
+        len(long_segments), total_changes, len(speech_segments), len(refined),
+    )
+
+    return refined
 
 
 def _extract_embeddings_with_progress(
@@ -117,6 +437,7 @@ def _extract_embeddings_with_progress(
             start_sample = int(win_start * sr)
             end_sample = int(win_end * sr)
             segment_audio = audio_data[start_sample:end_sample]
+            segment_audio = _normalize_segment_audio(segment_audio)
 
             tmp_path: str | None = None
             try:
@@ -204,45 +525,56 @@ def diarize(
 
     logger.info("Starting diarization on %s", wav_path.name)
 
-    # Stage 1: VAD
-    if progress_callback:
-        progress_callback("vad_start", {})
-    speech_segments = run_vad(str(wav_path))
-    total_speech = sum(s.end - s.start for s in speech_segments)
-    logger.info("VAD found %d speech segments (%.0fs of speech)", len(speech_segments), total_speech)
-    if progress_callback:
-        progress_callback("vad_done", {
-            "num_segments": len(speech_segments),
-            "total_speech_seconds": total_speech,
-        })
+    # Stage 0: Normalize audio loudness so quiet speakers are detected by VAD
+    norm_path = _normalize_audio_file(wav_path)
+    try:
+        # Stage 1: VAD
+        if progress_callback:
+            progress_callback("vad_start", {})
+        speech_segments = run_vad(str(norm_path))
+        total_speech = sum(s.end - s.start for s in speech_segments)
+        logger.info("VAD found %d speech segments (%.0fs of speech)", len(speech_segments), total_speech)
+        if progress_callback:
+            progress_callback("vad_done", {
+                "num_segments": len(speech_segments),
+                "total_speech_seconds": total_speech,
+            })
 
-    if not speech_segments:
-        return []
+        if not speech_segments:
+            return []
 
-    # Stage 2: Embedding extraction with progress
-    embeddings, subsegments = _extract_embeddings_with_progress(
-        wav_path, speech_segments, progress_callback
-    )
+        # Stage 2: Speaker change detection
+        speech_segments = _detect_speaker_changes(norm_path, speech_segments, progress_callback)
 
-    if embeddings.shape[0] == 0:
-        return []
+        # Stage 3: Embedding extraction with progress
+        embeddings, subsegments = _extract_embeddings_with_progress(
+            norm_path, speech_segments, progress_callback
+        )
 
-    # Stage 3: Spectral clustering
-    if progress_callback:
-        progress_callback("clustering_start", {})
-    cluster_kwargs = {}
-    if num_speakers is not None:
-        cluster_kwargs["num_speakers"] = num_speakers
-    labels, _details = cluster_speakers(embeddings, **cluster_kwargs)
-    num_found_speakers = len(set(labels))
-    logger.info("Clustering found %d speakers, %d segments", num_found_speakers, len(labels))
-    if progress_callback:
-        progress_callback("clustering_done", {
-            "num_speakers": num_found_speakers,
-            "num_segments": len(labels),
-        })
+        if embeddings.shape[0] == 0:
+            return []
 
-    return _build_segments_from_labels(speech_segments, subsegments, labels)
+        # Stage 4: Spectral clustering
+        if progress_callback:
+            progress_callback("clustering_start", {})
+        cluster_kwargs = {}
+        if num_speakers is not None:
+            cluster_kwargs["num_speakers"] = num_speakers
+        labels, _details = cluster_speakers(embeddings, **cluster_kwargs)
+        num_found_speakers = len(set(labels))
+        logger.info("Clustering found %d speakers, %d segments", num_found_speakers, len(labels))
+        if progress_callback:
+            progress_callback("clustering_done", {
+                "num_speakers": num_found_speakers,
+                "num_segments": len(labels),
+            })
+
+        return _build_segments_from_labels(speech_segments, subsegments, labels)
+    finally:
+        try:
+            norm_path.unlink()
+        except OSError:
+            pass
 
 
 def extract_speaker_embedding(
@@ -260,36 +592,46 @@ def extract_speaker_embedding(
     """
     from diarize.vad import run_vad
 
-    # Run VAD to get speech segments
-    speech_segments = run_vad(str(wav_path))
+    norm_path = _normalize_audio_file(wav_path)
+    try:
+        # Run VAD to get speech segments
+        speech_segments = run_vad(str(norm_path))
 
-    # Extract all embeddings
-    embeddings, subsegments = _extract_embeddings_with_progress(wav_path, speech_segments)
+        # Speaker change detection
+        speech_segments = _detect_speaker_changes(norm_path, speech_segments)
 
-    if embeddings.shape[0] == 0:
-        return None
+        # Extract all embeddings
+        embeddings, subsegments = _extract_embeddings_with_progress(norm_path, speech_segments)
 
-    # Filter to subsegments overlapping with the provided time ranges
-    matching_indices = []
-    for i, (sub_start, sub_end, _parent_idx) in enumerate(subsegments):
-        for range_start, range_end in time_ranges:
-            overlap_start = max(sub_start, range_start)
-            overlap_end = min(sub_end, range_end)
-            if overlap_start < overlap_end:
-                matching_indices.append(i)
-                break
+        if embeddings.shape[0] == 0:
+            return None
 
-    if not matching_indices:
-        return None
+        # Filter to subsegments overlapping with the provided time ranges
+        matching_indices = []
+        for i, (sub_start, sub_end, _parent_idx) in enumerate(subsegments):
+            for range_start, range_end in time_ranges:
+                overlap_start = max(sub_start, range_start)
+                overlap_end = min(sub_end, range_end)
+                if overlap_start < overlap_end:
+                    matching_indices.append(i)
+                    break
 
-    # Average and L2-normalize
-    matching_embs = embeddings[matching_indices]
-    avg_embedding = np.mean(matching_embs, axis=0)
-    norm = np.linalg.norm(avg_embedding)
-    if norm > 0:
-        avg_embedding = avg_embedding / norm
+        if not matching_indices:
+            return None
 
-    return avg_embedding
+        # Average and L2-normalize
+        matching_embs = embeddings[matching_indices]
+        avg_embedding = np.mean(matching_embs, axis=0)
+        norm = np.linalg.norm(avg_embedding)
+        if norm > 0:
+            avg_embedding = avg_embedding / norm
+
+        return avg_embedding
+    finally:
+        try:
+            norm_path.unlink()
+        except OSError:
+            pass
 
 
 def diarize_with_signatures(
@@ -320,93 +662,104 @@ def diarize_with_signatures(
 
     logger.info("Starting diarization with signatures on %s", wav_path.name)
 
-    # Stage 1: VAD
-    if progress_callback:
-        progress_callback("vad_start", {})
-    speech_segments = run_vad(str(wav_path))
-    total_speech = sum(s.end - s.start for s in speech_segments)
-    logger.info("VAD found %d speech segments (%.0fs)", len(speech_segments), total_speech)
-    if progress_callback:
-        progress_callback("vad_done", {
-            "num_segments": len(speech_segments),
-            "total_speech_seconds": total_speech,
-        })
+    # Stage 0: Normalize audio loudness so quiet speakers are detected by VAD
+    norm_path = _normalize_audio_file(wav_path)
+    try:
+        # Stage 1: VAD
+        if progress_callback:
+            progress_callback("vad_start", {})
+        speech_segments = run_vad(str(norm_path))
+        total_speech = sum(s.end - s.start for s in speech_segments)
+        logger.info("VAD found %d speech segments (%.0fs)", len(speech_segments), total_speech)
+        if progress_callback:
+            progress_callback("vad_done", {
+                "num_segments": len(speech_segments),
+                "total_speech_seconds": total_speech,
+            })
 
-    if not speech_segments:
-        return []
+        if not speech_segments:
+            return []
 
-    # Stage 2: Embedding extraction
-    embeddings, subsegments = _extract_embeddings_with_progress(
-        wav_path, speech_segments, progress_callback
-    )
+        # Stage 2: Speaker change detection
+        speech_segments = _detect_speaker_changes(norm_path, speech_segments, progress_callback)
 
-    if embeddings.shape[0] == 0:
-        return []
+        # Stage 3: Embedding extraction
+        embeddings, subsegments = _extract_embeddings_with_progress(
+            norm_path, speech_segments, progress_callback
+        )
 
-    # Stage 3: Clustering
-    if progress_callback:
-        progress_callback("clustering_start", {})
-    cluster_kwargs = {}
-    if num_speakers is not None:
-        cluster_kwargs["num_speakers"] = num_speakers
-    labels, _details = cluster_speakers(embeddings, **cluster_kwargs)
-    num_found_speakers = len(set(labels))
-    logger.info("Clustering found %d speakers", num_found_speakers)
-    if progress_callback:
-        progress_callback("clustering_done", {
-            "num_speakers": num_found_speakers,
-            "num_segments": len(labels),
-        })
+        if embeddings.shape[0] == 0:
+            return []
 
-    # Stage 4: Match speaker clusters to signatures
-    logger.info("Matching speakers to %d voice signatures", len(signatures))
+        # Stage 4: Clustering
+        if progress_callback:
+            progress_callback("clustering_start", {})
+        cluster_kwargs = {}
+        if num_speakers is not None:
+            cluster_kwargs["num_speakers"] = num_speakers
+        labels, _details = cluster_speakers(embeddings, **cluster_kwargs)
+        num_found_speakers = len(set(labels))
+        logger.info("Clustering found %d speakers", num_found_speakers)
+        if progress_callback:
+            progress_callback("clustering_done", {
+                "num_speakers": num_found_speakers,
+                "num_segments": len(labels),
+            })
 
-    # Group embeddings by speaker label via time overlap
-    speaker_embeddings: dict[int, list[np.ndarray]] = {}
-    for i, label in enumerate(labels):
-        label_int = int(label)
-        if label_int not in speaker_embeddings:
-            speaker_embeddings[label_int] = []
-        speaker_embeddings[label_int].append(embeddings[i])
+        # Stage 5: Match speaker clusters to signatures
+        logger.info("Matching speakers to %d voice signatures", len(signatures))
 
-    # Compute L2-normalized centroid per speaker
-    speaker_centroids: dict[int, np.ndarray] = {}
-    for label_int, embs in speaker_embeddings.items():
-        centroid = np.mean(embs, axis=0)
-        norm = np.linalg.norm(centroid)
-        if norm > 0:
-            centroid = centroid / norm
-        speaker_centroids[label_int] = centroid
+        # Group embeddings by speaker label via time overlap
+        speaker_embeddings: dict[int, list[np.ndarray]] = {}
+        for i, label in enumerate(labels):
+            label_int = int(label)
+            if label_int not in speaker_embeddings:
+                speaker_embeddings[label_int] = []
+            speaker_embeddings[label_int].append(embeddings[i])
 
-    # Build signature matrix
-    sig_ids = [s[0] for s in signatures]
-    sig_matrix = np.stack([s[1] for s in signatures])
+        # Compute L2-normalized centroid per speaker
+        speaker_centroids: dict[int, np.ndarray] = {}
+        for label_int, embs in speaker_embeddings.items():
+            centroid = np.mean(embs, axis=0)
+            norm = np.linalg.norm(centroid)
+            if norm > 0:
+                centroid = centroid / norm
+            speaker_centroids[label_int] = centroid
 
-    # Match each speaker centroid to a signature
-    label_map: dict[int, str] = {}
-    for label_int, centroid in speaker_centroids.items():
-        similarities = centroid @ sig_matrix.T
-        best_idx = int(np.argmax(similarities))
-        best_sim = float(similarities[best_idx])
+        # Build signature matrix
+        sig_ids = [s[0] for s in signatures]
+        sig_matrix = np.stack([s[1] for s in signatures])
 
-        if best_sim >= similarity_threshold:
-            label_map[label_int] = f"roster_{sig_ids[best_idx]}"
-        else:
-            label_map[label_int] = "Unknown Speaker"
+        # Match each speaker centroid to a signature
+        label_map: dict[int, str] = {}
+        for label_int, centroid in speaker_centroids.items():
+            similarities = centroid @ sig_matrix.T
+            best_idx = int(np.argmax(similarities))
+            best_sim = float(similarities[best_idx])
 
-    # Build output segments
-    raw_segments = []
-    for (start, end, _parent_idx), label in zip(subsegments, labels):
-        label_int = int(label)
-        mapped_label = label_map.get(label_int, "Unknown Speaker")
-        raw_segments.append(SpeakerSegment(
-            speaker_label=mapped_label,
-            start_time=start,
-            end_time=end,
-        ))
+            if best_sim >= similarity_threshold:
+                label_map[label_int] = f"roster_{sig_ids[best_idx]}"
+            else:
+                label_map[label_int] = "Unknown Speaker"
 
-    raw_segments.sort(key=lambda s: s.start_time)
-    return _merge_segments(raw_segments)
+        # Build output segments
+        raw_segments = []
+        for (start, end, _parent_idx), label in zip(subsegments, labels):
+            label_int = int(label)
+            mapped_label = label_map.get(label_int, "Unknown Speaker")
+            raw_segments.append(SpeakerSegment(
+                speaker_label=mapped_label,
+                start_time=start,
+                end_time=end,
+            ))
+
+        raw_segments.sort(key=lambda s: s.start_time)
+        return _merge_segments(raw_segments)
+    finally:
+        try:
+            norm_path.unlink()
+        except OSError:
+            pass
 
 
 def _merge_segments(raw_segments: list[SpeakerSegment]) -> list[SpeakerSegment]:

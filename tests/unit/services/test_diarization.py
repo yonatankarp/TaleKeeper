@@ -1,6 +1,8 @@
 """Tests for the speaker diarization service (diarize library)."""
 
 import pytest
+import soundfile as sf
+import tempfile
 from unittest.mock import patch, MagicMock, AsyncMock
 from pathlib import Path
 
@@ -9,14 +11,110 @@ import numpy as np
 from talekeeper.services.diarization import (
     _merge_segments,
     _build_segments_from_labels,
+    _compress_dynamic_range,
     _extract_embeddings_with_progress,
+    _extract_fine_stride_embeddings,
+    _find_speaker_change_points,
+    _normalize_audio_file,
+    _normalize_segment_audio,
+    _split_segment_at_changes,
+    _detect_speaker_changes,
     align_speakers_with_transcript,
     diarize,
     diarize_with_signatures,
     _resolve_hf_token,
     unload_models,
     SpeakerSegment,
+    CHANGE_DETECTION_WINDOW,
+    CHANGE_DETECTION_STEP,
+    MIN_SEGMENT_DURATION,
 )
+
+
+# ---- _compress_dynamic_range tests ----
+
+
+def test_compress_dynamic_range_boosts_quiet_sections():
+    """_compress_dynamic_range boosts quiet sections independently of loud ones."""
+    sr = 16000
+    # 1s quiet (RMS ~0.01), then 1s loud (RMS ~0.3)
+    quiet = np.full(sr, 0.01, dtype=np.float64)
+    loud = np.full(sr, 0.3, dtype=np.float64)
+    audio = np.concatenate([quiet, loud])
+
+    result = _compress_dynamic_range(audio, sr, target_rms=0.1)
+
+    # Quiet section should be boosted significantly
+    quiet_rms_before = float(np.sqrt(np.mean(quiet ** 2)))
+    quiet_rms_after = float(np.sqrt(np.mean(result[:sr] ** 2)))
+    assert quiet_rms_after > quiet_rms_before * 2  # at least 2x boost
+
+    # Loud section should be reduced
+    loud_rms_after = float(np.sqrt(np.mean(result[sr:] ** 2)))
+    assert loud_rms_after < 0.3
+
+
+def test_compress_dynamic_range_silent_passthrough():
+    """_compress_dynamic_range doesn't amplify near-silent audio."""
+    sr = 16000
+    audio = np.full(sr, 1e-8, dtype=np.float64)
+    result = _compress_dynamic_range(audio, sr)
+
+    # Should remain very quiet (scale=1.0 for silent windows)
+    result_rms = float(np.sqrt(np.mean(result ** 2)))
+    assert result_rms < 0.001
+
+
+# ---- _normalize_audio_file tests ----
+
+
+def test_normalize_audio_file_returns_temp_path(tmp_path):
+    """_normalize_audio_file writes a compressed WAV and returns its path."""
+    sr = 16000
+    audio = np.full(sr, 0.01, dtype=np.float64)  # 1s quiet
+    src = tmp_path / "quiet.wav"
+    sf.write(str(src), audio, sr)
+
+    norm_path = _normalize_audio_file(src)
+    try:
+        assert norm_path.exists()
+        assert norm_path != src  # should be a temp file, not the original
+
+        data, _ = sf.read(str(norm_path))
+        assert len(data) == sr  # same length
+    finally:
+        norm_path.unlink(missing_ok=True)
+
+
+# ---- _normalize_segment_audio tests ----
+
+
+def test_normalize_segment_audio_adjusts_rms():
+    """_normalize_segment_audio scales audio to target RMS."""
+    # Create a signal with known RMS (~0.05)
+    audio = np.full(1600, 0.05, dtype=np.float64)
+    result = _normalize_segment_audio(audio, target_rms=0.1)
+
+    result_rms = float(np.sqrt(np.mean(result ** 2)))
+    assert abs(result_rms - 0.1) < 0.001
+
+
+def test_normalize_segment_audio_silent_passthrough():
+    """_normalize_segment_audio passes near-silent audio through unchanged."""
+    audio = np.full(1600, 1e-8, dtype=np.float64)
+    result = _normalize_segment_audio(audio)
+
+    np.testing.assert_array_equal(result, audio)
+
+
+def test_normalize_segment_audio_clips():
+    """_normalize_segment_audio clips scaled values to [-1, 1]."""
+    # Large amplitude that, after scaling to target_rms=0.1, would exceed 1.0
+    audio = np.array([5.0, -5.0, 5.0, -5.0], dtype=np.float64)
+    result = _normalize_segment_audio(audio, target_rms=0.5)
+
+    assert float(np.max(result)) <= 1.0
+    assert float(np.min(result)) >= -1.0
 
 
 # ---- Engine-agnostic tests ----
@@ -142,10 +240,12 @@ def test_extract_embeddings_with_progress_callback(mock_wespeaker_module, mock_s
 # ---- Diarization tests ----
 
 
+@patch("talekeeper.services.diarization._normalize_audio_file", side_effect=lambda p: p)
+@patch("talekeeper.services.diarization._detect_speaker_changes", side_effect=lambda path, segs, cb=None: segs)
 @patch("talekeeper.services.diarization.cluster_speakers", create=True)
 @patch("talekeeper.services.diarization._extract_embeddings_with_progress")
 @patch("talekeeper.services.diarization.run_vad", create=True)
-def test_diarize(mock_run_vad, mock_extract, mock_cluster):
+def test_diarize(mock_run_vad, mock_extract, mock_cluster, mock_detect, mock_norm):
     """diarize runs the pipeline and returns merged speaker segments."""
 
     class FakeSeg:
@@ -187,8 +287,10 @@ def test_diarize(mock_run_vad, mock_extract, mock_cluster):
     assert segments[1].speaker_label == "SPEAKER_01"
 
 
+@patch("talekeeper.services.diarization._normalize_audio_file", side_effect=lambda p: p)
+@patch("talekeeper.services.diarization._detect_speaker_changes", side_effect=lambda path, segs, cb=None: segs)
 @patch("talekeeper.services.diarization._extract_embeddings_with_progress")
-def test_diarize_passes_num_speakers(mock_extract):
+def test_diarize_passes_num_speakers(mock_extract, mock_detect, mock_norm):
     """diarize passes num_speakers to cluster_speakers()."""
     class FakeSeg:
         def __init__(self, start, end):
@@ -216,8 +318,10 @@ def test_diarize_passes_num_speakers(mock_extract):
 # ---- Signature matching tests ----
 
 
+@patch("talekeeper.services.diarization._normalize_audio_file", side_effect=lambda p: p)
+@patch("talekeeper.services.diarization._detect_speaker_changes", side_effect=lambda path, segs, cb=None: segs)
 @patch("talekeeper.services.diarization._extract_embeddings_with_progress")
-def test_diarize_with_signatures_matches_above_threshold(mock_extract):
+def test_diarize_with_signatures_matches_above_threshold(mock_extract, mock_detect, mock_norm):
     """diarize_with_signatures matches speakers above similarity threshold."""
     class FakeSeg:
         def __init__(self, start, end):
@@ -261,8 +365,10 @@ def test_diarize_with_signatures_matches_above_threshold(mock_extract):
     assert "roster_102" in labels_out
 
 
+@patch("talekeeper.services.diarization._normalize_audio_file", side_effect=lambda p: p)
+@patch("talekeeper.services.diarization._detect_speaker_changes", side_effect=lambda path, segs, cb=None: segs)
 @patch("talekeeper.services.diarization._extract_embeddings_with_progress")
-def test_diarize_with_signatures_unknown_below_threshold(mock_extract):
+def test_diarize_with_signatures_unknown_below_threshold(mock_extract, mock_detect, mock_norm):
     """diarize_with_signatures labels speakers below threshold as Unknown."""
     class FakeSeg:
         def __init__(self, start, end):
@@ -296,6 +402,168 @@ def test_diarize_with_signatures_unknown_below_threshold(mock_extract):
         )
 
     assert all(s.speaker_label == "Unknown Speaker" for s in segments)
+
+
+# ---- Speaker change detection tests ----
+
+
+@patch("talekeeper.services.diarization.sf")
+@patch("talekeeper.services.diarization.wespeakerruntime", create=True)
+def test_extract_fine_stride_embeddings(mock_wespeaker_module, mock_sf):
+    """_extract_fine_stride_embeddings produces correct number of windows and embedding shape."""
+    # 5 seconds of audio at 16kHz
+    audio_data = np.zeros(80000, dtype=np.float32)
+    sr = 16000
+
+    mock_speaker_instance = MagicMock()
+    mock_speaker_instance.extract_embedding.return_value = np.random.randn(1, 256).astype(np.float32)
+    mock_sf.write = MagicMock()
+
+    with patch("wespeakerruntime.Speaker", return_value=mock_speaker_instance):
+        embeddings, timestamps = _extract_fine_stride_embeddings(audio_data, sr, 0.0, 5.0)
+
+    # Window=0.6s, step=0.3s, seg=5.0s → windows at 0.0, 0.3, 0.6, ..., 4.4
+    # Number of windows: floor((5.0 - 0.6) / 0.3) + 1 = floor(14.67) + 1 = 15
+    assert embeddings.shape[1] == 256
+    assert embeddings.shape[0] == len(timestamps)
+    assert embeddings.shape[0] > 0
+    # Each timestamp should be the center of a 0.6s window
+    for ts in timestamps:
+        assert ts >= 0.0
+        assert ts <= 5.0
+
+
+def test_find_speaker_change_points_detects_transitions():
+    """_find_speaker_change_points detects change points at speaker transitions."""
+    # Create embeddings: 5 from speaker A (dim 0), 5 from speaker B (dim 1)
+    emb_a = np.zeros(256, dtype=np.float32)
+    emb_a[0] = 1.0
+    emb_b = np.zeros(256, dtype=np.float32)
+    emb_b[1] = 1.0
+
+    # 10 embeddings: 5xA then 5xB
+    embeddings = np.stack([emb_a] * 5 + [emb_b] * 5)
+    timestamps = [0.3 * i + 0.3 for i in range(10)]
+
+    change_times = _find_speaker_change_points(embeddings, timestamps)
+
+    # Should detect exactly one change point between index 4 and 5
+    assert len(change_times) == 1
+    # Change should be between timestamp[4] and timestamp[5]
+    expected = (timestamps[4] + timestamps[5]) / 2.0
+    assert abs(change_times[0] - expected) < 0.01
+
+
+def test_find_speaker_change_points_single_speaker():
+    """_find_speaker_change_points detects no changes for single-speaker embeddings."""
+    emb = np.zeros(256, dtype=np.float32)
+    emb[0] = 1.0
+    # Add small noise so embeddings aren't identical (which would cause NaN cosine distance)
+    embeddings = np.stack([emb + np.random.randn(256) * 0.01 for _ in range(10)])
+    timestamps = [0.3 * i + 0.3 for i in range(10)]
+
+    change_times = _find_speaker_change_points(embeddings, timestamps)
+
+    assert len(change_times) == 0
+
+
+def test_split_segment_at_changes():
+    """_split_segment_at_changes splits correctly and merges short sub-segments."""
+    # Segment from 0.0 to 10.0, split at 3.0 and 7.0
+    sub_segs = _split_segment_at_changes(0.0, 10.0, [3.0, 7.0])
+
+    assert len(sub_segs) == 3
+    assert sub_segs[0] == (0.0, 3.0)
+    assert sub_segs[1] == (3.0, 7.0)
+    assert sub_segs[2] == (7.0, 10.0)
+
+
+def test_split_segment_at_changes_merges_short():
+    """_split_segment_at_changes merges sub-segments shorter than MIN_SEGMENT_DURATION."""
+    # Split at 0.2 would create a 0.2s sub-segment — should merge with neighbor
+    sub_segs = _split_segment_at_changes(0.0, 5.0, [0.2])
+
+    # The 0.0-0.2 segment is too short and merges with 0.2-5.0
+    assert len(sub_segs) == 1
+    assert sub_segs[0] == (0.0, 5.0)
+
+
+def test_split_segment_at_changes_empty():
+    """_split_segment_at_changes returns original segment when no change points."""
+    sub_segs = _split_segment_at_changes(0.0, 10.0, [])
+
+    assert len(sub_segs) == 1
+    assert sub_segs[0] == (0.0, 10.0)
+
+
+@patch("talekeeper.services.diarization._extract_fine_stride_embeddings")
+@patch("talekeeper.services.diarization.sf")
+def test_detect_speaker_changes(mock_sf, mock_fine_embed):
+    """_detect_speaker_changes processes long segments and passes short ones through."""
+    mock_sf.read.return_value = (np.zeros(160000), 16000)
+
+    class FakeSeg:
+        def __init__(self, start, end):
+            self.start = start
+            self.end = end
+
+    # One short segment (1.5s) and one long segment (5.0s)
+    short_seg = FakeSeg(0.0, 1.5)
+    long_seg = FakeSeg(2.0, 7.0)
+
+    # For the long segment, return embeddings with a speaker change
+    emb_a = np.zeros(256, dtype=np.float32)
+    emb_a[0] = 1.0
+    emb_b = np.zeros(256, dtype=np.float32)
+    emb_b[1] = 1.0
+    embeddings = np.stack([emb_a] * 5 + [emb_b] * 5)
+    timestamps = [2.0 + 0.3 * i + 0.3 for i in range(10)]
+    mock_fine_embed.return_value = (embeddings, timestamps)
+
+    progress_calls = []
+    def progress_cb(stage, detail):
+        progress_calls.append((stage, detail))
+
+    result = _detect_speaker_changes(Path("test.wav"), [short_seg, long_seg], progress_cb)
+
+    # Short segment should pass through unchanged
+    assert result[0] is short_seg
+    # Long segment should be split (at least 2 sub-segments)
+    assert len(result) >= 3  # 1 short + at least 2 from split
+    # Progress should have start and done events
+    stages = [c[0] for c in progress_calls]
+    assert "change_detection_start" in stages
+    assert "change_detection_done" in stages
+
+
+@patch("talekeeper.services.diarization._normalize_audio_file", side_effect=lambda p: p)
+@patch("talekeeper.services.diarization._detect_speaker_changes")
+@patch("talekeeper.services.diarization._extract_embeddings_with_progress")
+def test_diarize_calls_detect_speaker_changes(mock_extract, mock_detect, mock_norm):
+    """diarize() calls _detect_speaker_changes() in the pipeline."""
+    class FakeSeg:
+        def __init__(self, start, end):
+            self.start = start
+            self.end = end
+
+    vad_segs = [FakeSeg(0.0, 3.0)]
+    mock_run_vad = MagicMock(return_value=vad_segs)
+
+    # _detect_speaker_changes returns segments unchanged
+    mock_detect.return_value = vad_segs
+
+    embeddings = np.random.randn(1, 256).astype(np.float32)
+    mock_extract.return_value = (embeddings, [(0.0, 1.2, 0)])
+
+    mock_cluster = MagicMock(return_value=(np.array([0]), None))
+
+    with patch.dict("sys.modules", {
+        "diarize.vad": MagicMock(run_vad=mock_run_vad),
+        "diarize.clustering": MagicMock(cluster_speakers=mock_cluster),
+    }):
+        diarize(Path("test.wav"))
+
+    mock_detect.assert_called_once()
 
 
 # ---- HF token resolution tests ----

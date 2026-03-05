@@ -24,11 +24,19 @@ def cmd_serve(args: argparse.Namespace) -> None:
     class _Config(uvicorn.Config):
         pass
 
+    log_config = uvicorn.config.LOGGING_CONFIG
+    log_fmt = "%(asctime)s %(levelname)s:%(name)s: %(message)s"
+    date_fmt = "%H:%M:%S"
+    for formatter in log_config["formatters"].values():
+        formatter["fmt"] = log_fmt
+        formatter["datefmt"] = date_fmt
+
     server = uvicorn.Server(_Config(
         "talekeeper.app:app",
         host=host,
         port=port,
         reload=args.reload,
+        log_config=log_config,
     ))
 
     original_startup = server.startup

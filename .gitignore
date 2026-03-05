@@ -33,7 +33,7 @@ data/
 site/
 
 # ML model weights
-frontend/mlx_models/
+mlx_models/
 *.npz
 *.bin
 *.safetensors
