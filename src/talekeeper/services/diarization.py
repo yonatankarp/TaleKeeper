@@ -10,6 +10,7 @@ from typing import Callable
 
 import numpy as np
 import soundfile as sf
+from scipy.optimize import linear_sum_assignment
 
 from talekeeper.db import get_db
 
@@ -547,8 +548,11 @@ def diarize(
         speech_segments = _detect_speaker_changes(norm_path, speech_segments, progress_callback)
 
         # Stage 3: Embedding extraction with progress
+        # Use original wav_path, not norm_path: WeSpeaker handles loudness variation
+        # internally; running AGC before embedding extraction boosts noise alongside
+        # speech, worsening SNR for distant speakers rather than helping them.
         embeddings, subsegments = _extract_embeddings_with_progress(
-            norm_path, speech_segments, progress_callback
+            wav_path, speech_segments, progress_callback
         )
 
         if embeddings.shape[0] == 0:
@@ -600,8 +604,8 @@ def extract_speaker_embedding(
         # Speaker change detection
         speech_segments = _detect_speaker_changes(norm_path, speech_segments)
 
-        # Extract all embeddings
-        embeddings, subsegments = _extract_embeddings_with_progress(norm_path, speech_segments)
+        # Extract all embeddings from original audio (see diarize() for rationale)
+        embeddings, subsegments = _extract_embeddings_with_progress(wav_path, speech_segments)
 
         if embeddings.shape[0] == 0:
             return None
@@ -683,9 +687,9 @@ def diarize_with_signatures(
         # Stage 2: Speaker change detection
         speech_segments = _detect_speaker_changes(norm_path, speech_segments, progress_callback)
 
-        # Stage 3: Embedding extraction
+        # Stage 3: Embedding extraction (original audio — see diarize() for rationale)
         embeddings, subsegments = _extract_embeddings_with_progress(
-            norm_path, speech_segments, progress_callback
+            wav_path, speech_segments, progress_callback
         )
 
         if embeddings.shape[0] == 0:
@@ -706,10 +710,13 @@ def diarize_with_signatures(
                 "num_segments": len(labels),
             })
 
-        # Stage 5: Match speaker clusters to signatures
+        # Stage 5: Match speaker clusters to signatures via Hungarian algorithm
+        # Hungarian guarantees a globally optimal 1:1 cluster→signature assignment.
+        # Greedy argmax can assign two clusters to the same person while leaving
+        # another speaker unmatched — Hungarian prevents that entirely.
         logger.info("Matching speakers to %d voice signatures", len(signatures))
 
-        # Group embeddings by speaker label via time overlap
+        # Group embeddings by speaker label
         speaker_embeddings: dict[int, list[np.ndarray]] = {}
         for i, label in enumerate(labels):
             label_int = int(label)
@@ -726,21 +733,27 @@ def diarize_with_signatures(
                 centroid = centroid / norm
             speaker_centroids[label_int] = centroid
 
-        # Build signature matrix
+        # Build similarity matrix: (num_clusters, num_signatures)
         sig_ids = [s[0] for s in signatures]
         sig_matrix = np.stack([s[1] for s in signatures])
+        cluster_labels = list(speaker_centroids.keys())
+        centroid_matrix = np.stack([speaker_centroids[l] for l in cluster_labels])
+        sim_matrix = centroid_matrix @ sig_matrix.T  # (num_clusters, num_sigs)
 
-        # Match each speaker centroid to a signature
-        label_map: dict[int, str] = {}
-        for label_int, centroid in speaker_centroids.items():
-            similarities = centroid @ sig_matrix.T
-            best_idx = int(np.argmax(similarities))
-            best_sim = float(similarities[best_idx])
+        # Hungarian assignment: minimize cost = maximize similarity
+        row_ind, col_ind = linear_sum_assignment(1.0 - sim_matrix)
 
+        label_map: dict[int, str] = {l: "Unknown Speaker" for l in cluster_labels}
+        for r, c in zip(row_ind, col_ind):
+            best_sim = float(sim_matrix[r, c])
             if best_sim >= similarity_threshold:
-                label_map[label_int] = f"roster_{sig_ids[best_idx]}"
-            else:
-                label_map[label_int] = "Unknown Speaker"
+                label_map[cluster_labels[r]] = f"roster_{sig_ids[c]}"
+        logger.info(
+            "Hungarian matching: %d/%d clusters matched above threshold %.2f",
+            sum(1 for v in label_map.values() if v != "Unknown Speaker"),
+            len(cluster_labels),
+            similarity_threshold,
+        )
 
         # Build output segments
         raw_segments = []

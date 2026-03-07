@@ -404,6 +404,68 @@ def test_diarize_with_signatures_unknown_below_threshold(mock_extract, mock_dete
     assert all(s.speaker_label == "Unknown Speaker" for s in segments)
 
 
+@patch("talekeeper.services.diarization._normalize_audio_file", side_effect=lambda p: p)
+@patch("talekeeper.services.diarization._detect_speaker_changes", side_effect=lambda path, segs, cb=None: segs)
+@patch("talekeeper.services.diarization._extract_embeddings_with_progress")
+def test_diarize_with_signatures_no_double_assignment(mock_extract, mock_detect, mock_norm):
+    """Hungarian algorithm prevents two clusters from matching the same signature.
+
+    Greedy argmax would assign both cluster 0 and cluster 1 to roster_101 (since both
+    score higher against sig1 than sig2). Hungarian finds the globally optimal 1:1
+    assignment so cluster 1 is correctly matched to roster_102.
+    """
+    class FakeSeg:
+        def __init__(self, start, end):
+            self.start = start
+            self.end = end
+
+    mock_run_vad = MagicMock(return_value=[FakeSeg(0.0, 5.0), FakeSeg(5.0, 10.0)])
+
+    # sig1 points along dim 0, sig2 along dim 1
+    sig1 = np.zeros(256, dtype=np.float32)
+    sig1[0] = 1.0
+    sig2 = np.zeros(256, dtype=np.float32)
+    sig2[1] = 1.0
+
+    # cluster 0: very close to sig1 (greedy picks sig1 ✓)
+    # cluster 1: slightly closer to sig1 than sig2, but sig2 is a much better overall fit
+    # Cosine sims: cluster0→sig1=0.99, cluster0→sig2=0.1, cluster1→sig1=0.8, cluster1→sig2=0.9
+    emb0 = np.zeros(256, dtype=np.float32)
+    emb0[0] = 0.99
+    emb0[1] = 0.1
+    norm0 = np.linalg.norm(emb0)
+    emb0 /= norm0
+
+    emb1 = np.zeros(256, dtype=np.float32)
+    emb1[0] = 0.8
+    emb1[1] = 0.9
+    norm1 = np.linalg.norm(emb1)
+    emb1 /= norm1
+
+    embeddings = np.stack([emb0, emb1])
+    subsegments = [(0.0, 5.0, 0), (5.0, 10.0, 1)]
+    mock_extract.return_value = (embeddings, subsegments)
+
+    labels = np.array([0, 1])
+    mock_cluster = MagicMock(return_value=(labels, None))
+
+    with patch.dict("sys.modules", {
+        "diarize.vad": MagicMock(run_vad=mock_run_vad),
+        "diarize.clustering": MagicMock(cluster_speakers=mock_cluster),
+    }):
+        segments = diarize_with_signatures(
+            Path("test.wav"),
+            signatures=[(101, sig1), (102, sig2)],
+            similarity_threshold=0.5,
+        )
+
+    labels_out = {s.speaker_label for s in segments}
+    # Both speakers should be matched — no double assignment leaves one as Unknown
+    assert "roster_101" in labels_out
+    assert "roster_102" in labels_out
+    assert "Unknown Speaker" not in labels_out
+
+
 # ---- Speaker change detection tests ----
 
 
