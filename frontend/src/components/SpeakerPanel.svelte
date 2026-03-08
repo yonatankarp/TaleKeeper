@@ -125,11 +125,11 @@
   }
 
   async function loadSegmentCounts() {
-    type Segment = { speaker_id: number | null };
+    type Segment = { speaker_id: number | null; is_overlap: boolean };
     const segments = await api.get<Segment[]>(`/sessions/${sessionId}/transcript`);
     const counts: Record<number, number> = {};
     for (const seg of segments) {
-      if (seg.speaker_id != null) {
+      if (seg.speaker_id != null && !seg.is_overlap) {
         counts[seg.speaker_id] = (counts[seg.speaker_id] ?? 0) + 1;
       }
     }

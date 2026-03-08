@@ -15,9 +15,11 @@ from talekeeper.services.diarization import (
     _extract_embeddings_with_progress,
     _extract_fine_stride_embeddings,
     _find_speaker_change_points,
+    _flag_overlap_subsegments,
     _normalize_audio_file,
     _normalize_segment_audio,
     _split_segment_at_changes,
+    _split_transcript_segments,
     _detect_speaker_changes,
     align_speakers_with_transcript,
     diarize,
@@ -193,6 +195,126 @@ def test_build_segments_from_labels_empty():
     """_build_segments_from_labels returns empty list for no subsegments."""
     segments = _build_segments_from_labels([], [], np.array([]))
     assert segments == []
+
+
+# ---- _flag_overlap_subsegments tests ----
+
+
+def test_flag_overlap_subsegments_ambiguous_embedding_flagged():
+    """_flag_overlap_subsegments flags embeddings equidistant between two clusters.
+
+    Uses 5 clear embeddings per cluster so the single ambiguous embedding doesn't
+    dominate its cluster's centroid, ensuring the ratio test fires correctly.
+    """
+    emb0 = np.zeros(256, dtype=np.float32)
+    emb0[0] = 1.0  # cluster 0 direction: dim 0
+
+    emb1 = np.zeros(256, dtype=np.float32)
+    emb1[1] = 1.0  # cluster 1 direction: dim 1
+
+    # Ambiguous: 45 degrees between both clusters
+    emb_ambiguous = np.zeros(256, dtype=np.float32)
+    emb_ambiguous[0] = 1.0
+    emb_ambiguous[1] = 1.0
+
+    # 5 clear embeddings for each cluster, 1 ambiguous assigned to cluster 0
+    embeddings = np.vstack([
+        np.stack([emb0] * 5),
+        np.stack([emb1] * 5),
+        emb_ambiguous.reshape(1, -1),
+    ])
+    labels = np.array([0] * 5 + [1] * 5 + [0])
+
+    mask = _flag_overlap_subsegments(embeddings, labels, threshold=0.85)
+
+    assert not np.any(mask[:5])   # clear cluster 0 embeddings — not flagged
+    assert not np.any(mask[5:10]) # clear cluster 1 embeddings — not flagged
+    assert mask[10]               # ambiguous embedding — flagged
+
+
+def test_flag_overlap_subsegments_clear_embedding_not_flagged():
+    """_flag_overlap_subsegments does not flag clearly separated embeddings."""
+    emb0 = np.zeros(256, dtype=np.float32)
+    emb0[0] = 1.0
+    emb1 = np.zeros(256, dtype=np.float32)
+    emb1[1] = 1.0
+
+    embeddings = np.stack([emb0, emb1])
+    labels = np.array([0, 1])
+
+    mask = _flag_overlap_subsegments(embeddings, labels, threshold=0.85)
+
+    assert not mask[0]
+    assert not mask[1]
+
+
+def test_flag_overlap_subsegments_single_cluster_empty_mask():
+    """_flag_overlap_subsegments returns all-False mask for single-cluster input."""
+    embeddings = np.random.randn(4, 256).astype(np.float32)
+    labels = np.array([0, 0, 0, 0])
+
+    mask = _flag_overlap_subsegments(embeddings, labels, threshold=0.85)
+
+    assert mask.shape == (4,)
+    assert not np.any(mask)
+
+
+def test_flag_overlap_subsegments_empty_input():
+    """_flag_overlap_subsegments handles empty input without error."""
+    mask = _flag_overlap_subsegments(
+        np.empty((0, 256), dtype=np.float32), np.array([]), threshold=0.85
+    )
+    assert mask.shape == (0,)
+
+
+# ---- _build_segments_from_labels with overlap mask ----
+
+
+def test_build_segments_from_labels_with_overlap_mask():
+    """_build_segments_from_labels assigns [crosstalk] label to masked subsegments."""
+    speech_segments = [MagicMock(start=0.0, end=6.0)]
+    subsegments = [
+        (0.0, 1.2, 0),
+        (1.2, 2.4, 0),
+        (2.4, 3.6, 0),
+    ]
+    labels = np.array([0, 1, 0])
+    overlap_mask = np.array([False, True, False])
+
+    segments = _build_segments_from_labels(speech_segments, subsegments, labels, overlap_mask)
+
+    labels_out = [s.speaker_label for s in segments]
+    assert "SPEAKER_00" in labels_out
+    assert "[crosstalk]" in labels_out
+    # [crosstalk] segment spans 1.2-2.4
+    crosstalk_seg = next(s for s in segments if s.speaker_label == "[crosstalk]")
+    assert crosstalk_seg.start_time == 1.2
+    assert crosstalk_seg.end_time == 2.4
+
+
+# ---- align_speakers_with_transcript with [crosstalk] ----
+
+
+def test_align_speakers_with_transcript_crosstalk_segment():
+    """Segment aligned to [crosstalk] gets is_overlap=1 and no speaker_label assigned."""
+    speaker_segs = [
+        SpeakerSegment("[crosstalk]", 2.0, 4.0),
+        SpeakerSegment("SPEAKER_00", 4.0, 8.0),
+    ]
+    transcript_segs = [
+        {"id": 1, "start_time": 2.5, "end_time": 3.5, "text": "mumble"},
+        {"id": 2, "start_time": 5.0, "end_time": 7.0, "text": "hello"},
+    ]
+
+    aligned = align_speakers_with_transcript(speaker_segs, transcript_segs)
+
+    overlap_seg = next(s for s in aligned if s["id"] == 1)
+    clear_seg = next(s for s in aligned if s["id"] == 2)
+
+    assert overlap_seg["is_overlap"] == 1
+    assert overlap_seg.get("speaker_label") is None
+    assert clear_seg["is_overlap"] == 0
+    assert clear_seg["speaker_label"] == "SPEAKER_00"
 
 
 # ---- _extract_embeddings_with_progress tests ----
@@ -484,12 +606,12 @@ def test_extract_fine_stride_embeddings(mock_wespeaker_module, mock_sf):
     with patch("wespeakerruntime.Speaker", return_value=mock_speaker_instance):
         embeddings, timestamps = _extract_fine_stride_embeddings(audio_data, sr, 0.0, 5.0)
 
-    # Window=0.6s, step=0.3s, seg=5.0s → windows at 0.0, 0.3, 0.6, ..., 4.4
-    # Number of windows: floor((5.0 - 0.6) / 0.3) + 1 = floor(14.67) + 1 = 15
+    # Window=0.4s, step=0.2s, seg=5.0s → windows at 0.0, 0.2, 0.4, ..., 4.6
+    # Number of windows: floor((5.0 - 0.4) / 0.2) + 1 = 23
     assert embeddings.shape[1] == 256
     assert embeddings.shape[0] == len(timestamps)
     assert embeddings.shape[0] > 0
-    # Each timestamp should be the center of a 0.6s window
+    # Each timestamp should be the center of a 0.4s window
     for ts in timestamps:
         assert ts >= 0.0
         assert ts <= 5.0
@@ -569,8 +691,8 @@ def test_detect_speaker_changes(mock_sf, mock_fine_embed):
             self.start = start
             self.end = end
 
-    # One short segment (1.5s) and one long segment (5.0s)
-    short_seg = FakeSeg(0.0, 1.5)
+    # One short segment (0.7s < MIN_CHANGE_DETECTION_DURATION=2.0s) and one long segment (5.0s)
+    short_seg = FakeSeg(0.0, 0.7)
     long_seg = FakeSeg(2.0, 7.0)
 
     # For the long segment, return embeddings with a speaker change
@@ -665,3 +787,117 @@ async def test_resolve_hf_token_missing_raises(db):
     with patch.dict("os.environ", {}, clear=True):
         with pytest.raises(ValueError, match="HuggingFace token required"):
             await _resolve_hf_token()
+
+
+# ---- _split_transcript_segments tests ----
+
+
+def _make_t_seg(id, start, end, text="hello world foo bar baz"):
+    return {"id": id, "session_id": 1, "text": text, "start_time": start, "end_time": end}
+
+
+def test_split_transcript_segments_single_speaker_unchanged():
+    """_split_transcript_segments leaves segment unchanged when only one speaker overlaps."""
+    t_segs = [_make_t_seg(1, 0.0, 5.0)]
+    speaker_segs = [SpeakerSegment("SPEAKER_00", 0.0, 5.0)]
+
+    result = _split_transcript_segments(t_segs, speaker_segs)
+
+    assert len(result) == 1
+    assert result[0]["id"] == 1
+    assert result[0]["start_time"] == 0.0
+    assert result[0]["end_time"] == 5.0
+
+
+def test_split_transcript_segments_two_speakers():
+    """_split_transcript_segments splits at a single speaker boundary."""
+    # 12s segment, speaker change at 6s → each child is exactly MIN_SPLIT_CHILD_DURATION
+    t_segs = [_make_t_seg(1, 0.0, 12.0, "a b c d e f g h i j k l")]
+    speaker_segs = [
+        SpeakerSegment("SPEAKER_00", 0.0, 6.0),
+        SpeakerSegment("SPEAKER_01", 6.0, 12.0),
+    ]
+
+    result = _split_transcript_segments(t_segs, speaker_segs)
+
+    assert len(result) == 2
+    # Both children get id=None and point to original
+    assert result[0]["id"] is None
+    assert result[0]["parent_segment_id"] == 1
+    assert result[0]["start_time"] == 0.0
+    assert result[0]["end_time"] == 6.0
+    assert result[1]["id"] is None
+    assert result[1]["parent_segment_id"] == 1
+    assert result[1]["start_time"] == 6.0
+    assert result[1]["end_time"] == 12.0
+    assert result[1]["session_id"] == 1
+    # Text split: 50%/50% of 12 words = 6 words each
+    assert len(result[0]["text"].split()) == 6
+    assert len(result[1]["text"].split()) == 6
+    # All words preserved
+    all_words = result[0]["text"].split() + result[1]["text"].split()
+    assert all_words == "a b c d e f g h i j k l".split()
+
+
+def test_split_transcript_segments_three_speakers():
+    """_split_transcript_segments splits at two speaker boundaries."""
+    # 15s segment, changes at 5s and 10s → each child is exactly MIN_SPLIT_CHILD_DURATION
+    t_segs = [_make_t_seg(1, 0.0, 15.0, "a b c d e f g h i j k l m n o")]
+    speaker_segs = [
+        SpeakerSegment("SPEAKER_00", 0.0, 5.0),
+        SpeakerSegment("SPEAKER_01", 5.0, 10.0),
+        SpeakerSegment("SPEAKER_02", 10.0, 15.0),
+    ]
+
+    result = _split_transcript_segments(t_segs, speaker_segs)
+
+    assert len(result) == 3
+    # All children point to original
+    for sub in result:
+        assert sub["id"] is None
+        assert sub["parent_segment_id"] == 1
+    assert result[0]["start_time"] == 0.0
+    assert result[1]["start_time"] == 5.0
+    assert result[2]["start_time"] == 10.0
+    # Each sub gets 5 words (equal thirds of 15 words)
+    for sub in result:
+        assert len(sub["text"].split()) == 5
+
+
+def test_split_transcript_segments_short_boundary_not_split():
+    """_split_transcript_segments skips split points that leave children < MIN_SPLIT_CHILD_DURATION."""
+    # 10s segment, change at 4s → left child would be 4s < MIN_SPLIT_CHILD_DURATION=5s → no split
+    t_segs = [_make_t_seg(1, 0.0, 10.0, "a b c d e f g h i j")]
+    speaker_segs = [
+        SpeakerSegment("SPEAKER_00", 0.0, 4.0),
+        SpeakerSegment("SPEAKER_01", 4.0, 10.0),
+    ]
+
+    result = _split_transcript_segments(t_segs, speaker_segs)
+
+    # 4s < MIN_SPLIT_CHILD_DURATION=5s → not a valid split point → original unchanged
+    assert len(result) == 1
+    assert result[0]["id"] == 1
+
+
+def test_split_transcript_segments_crosstalk_split_then_align():
+    """Crosstalk diarization segment: after split+align the crosstalk sub gets is_overlap=1."""
+    # 12s segment, change at 6s → each child is exactly MIN_SPLIT_CHILD_DURATION
+    t_segs = [_make_t_seg(1, 0.0, 12.0, "a b c d e f g h i j k l")]
+    speaker_segs = [
+        SpeakerSegment("SPEAKER_00", 0.0, 6.0),
+        SpeakerSegment("[crosstalk]", 6.0, 12.0),
+    ]
+
+    split_segs = _split_transcript_segments(t_segs, speaker_segs)
+    assert len(split_segs) == 2
+
+    aligned = align_speakers_with_transcript(speaker_segs, split_segs)
+
+    speaker_sub = next(s for s in aligned if s["start_time"] < 6.0)
+    crosstalk_sub = next(s for s in aligned if s["start_time"] >= 6.0)
+
+    assert speaker_sub.get("speaker_label") == "SPEAKER_00"
+    assert speaker_sub.get("is_overlap", 0) == 0
+    assert crosstalk_sub.get("is_overlap") == 1
+    assert crosstalk_sub.get("speaker_label") is None

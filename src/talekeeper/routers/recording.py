@@ -93,7 +93,7 @@ async def recording_ws(websocket: WebSocket, session_id: int) -> None:
             async with get_db() as db:
                 await db.execute(
                     "UPDATE sessions SET audio_path = ?, status = 'audio_ready', updated_at = datetime('now') WHERE id = ?",
-                    (str(audio_path), session_id),
+                    (str(audio_path.resolve()), session_id),
                 )
         else:
             # No audio recorded, revert to draft and clean up

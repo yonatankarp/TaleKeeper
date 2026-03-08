@@ -208,6 +208,68 @@ async def test_retranscribe_no_audio(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_transcript_endpoint_returns_is_overlap(client: AsyncClient) -> None:
+    """GET /api/sessions/{id}/transcript returns is_overlap field on each segment."""
+    async with get_db() as db:
+        cursor = await db.execute("INSERT INTO campaigns (name) VALUES ('C')")
+        campaign_id = cursor.lastrowid
+        cursor = await db.execute(
+            "INSERT INTO sessions (campaign_id, name, date) VALUES (?, 'S', '2025-01-01')",
+            (campaign_id,),
+        )
+        session_id = cursor.lastrowid
+        await db.execute(
+            "INSERT INTO transcript_segments (session_id, text, start_time, end_time, is_overlap) "
+            "VALUES (?, 'Normal speech', 0.0, 1.0, 0)",
+            (session_id,),
+        )
+        await db.execute(
+            "INSERT INTO transcript_segments (session_id, text, start_time, end_time, is_overlap) "
+            "VALUES (?, 'Crosstalk here', 1.0, 2.0, 1)",
+            (session_id,),
+        )
+        await db.commit()
+
+    resp = await client.get(f"/api/sessions/{session_id}/transcript")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 2
+    # Both segments must have the is_overlap field
+    assert "is_overlap" in data[0]
+    assert "is_overlap" in data[1]
+    # Values match what was inserted
+    assert data[0]["is_overlap"] == 0
+    assert data[1]["is_overlap"] == 1
+
+
+@pytest.mark.asyncio
+async def test_db_migration_is_overlap_defaults_zero(client: AsyncClient) -> None:
+    """Existing transcript_segments rows get is_overlap = 0 via migration default."""
+    async with get_db() as db:
+        cursor = await db.execute("INSERT INTO campaigns (name) VALUES ('MigC')")
+        campaign_id = cursor.lastrowid
+        cursor = await db.execute(
+            "INSERT INTO sessions (campaign_id, name, date) VALUES (?, 'MigS', '2025-01-01')",
+            (campaign_id,),
+        )
+        session_id = cursor.lastrowid
+        # Insert without specifying is_overlap — should default to 0
+        await db.execute(
+            "INSERT INTO transcript_segments (session_id, text, start_time, end_time) "
+            "VALUES (?, 'Legacy segment', 0.0, 2.0)",
+            (session_id,),
+        )
+        await db.commit()
+
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT is_overlap FROM transcript_segments WHERE session_id = ?", (session_id,)
+        )
+    assert len(rows) == 1
+    assert rows[0]["is_overlap"] == 0
+
+
+@pytest.mark.asyncio
 async def test_retranscribe_session_not_found(client: AsyncClient) -> None:
     """POST /api/sessions/{id}/retranscribe returns 404 for non-existent session."""
     resp = await client.post(
@@ -216,3 +278,87 @@ async def test_retranscribe_session_not_found(client: AsyncClient) -> None:
     )
     assert resp.status_code == 404
     assert "Session not found" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_split_transcript_segments_db_insert(db) -> None:
+    """_split_transcript_segments: split segments are correctly inserted into the DB.
+
+    Simulates what run_final_diarization does when a transcript segment is split
+    at a speaker boundary: the original row is updated (first sub-segment) and
+    a new row is inserted (second sub-segment).
+    """
+    from talekeeper.services.diarization import _split_transcript_segments, SpeakerSegment
+
+    cursor = await db.execute("INSERT INTO campaigns (name) VALUES ('C')")
+    campaign_id = cursor.lastrowid
+    cursor = await db.execute(
+        "INSERT INTO sessions (campaign_id, name, date) VALUES (?, 'S', '2025-01-01')",
+        (campaign_id,),
+    )
+    session_id = cursor.lastrowid
+    cursor = await db.execute(
+        "INSERT INTO transcript_segments (session_id, text, start_time, end_time) VALUES (?, ?, ?, ?)",
+        (session_id, "a b c d e f g h i j k l", 0.0, 12.0),
+    )
+    original_id = cursor.lastrowid
+    await db.commit()
+
+    # Fetch as run_final_diarization would
+    rows = await db.execute_fetchall(
+        "SELECT id, session_id, text, start_time, end_time FROM transcript_segments WHERE session_id = ?",
+        (session_id,),
+    )
+    transcript_segs = [dict(r) for r in rows]
+
+    # Split at 6s: each child is exactly MIN_SPLIT_CHILD_DURATION (5s minimum satisfied)
+    speaker_segs = [
+        SpeakerSegment("SPEAKER_00", 0.0, 6.0),
+        SpeakerSegment("SPEAKER_01", 6.0, 12.0),
+    ]
+    split_segs = _split_transcript_segments(transcript_segs, speaker_segs)
+    assert len(split_segs) == 2
+
+    # Simulate DB writes: INSERT both children (original row is left intact)
+    for child in split_segs:
+        assert child["id"] is None
+        assert child["parent_segment_id"] == original_id
+        await db.execute(
+            "INSERT INTO transcript_segments (session_id, parent_segment_id, text, start_time, end_time) VALUES (?, ?, ?, ?, ?)",
+            (child["session_id"], child["parent_segment_id"], child["text"], child["start_time"], child["end_time"]),
+        )
+    await db.commit()
+
+    # Original row still intact
+    orig_row = await db.execute_fetchall(
+        "SELECT id, start_time, end_time, text FROM transcript_segments WHERE id = ?",
+        (original_id,),
+    )
+    assert orig_row[0]["start_time"] == 0.0
+    assert orig_row[0]["end_time"] == 12.0
+
+    # Children exist with correct boundaries
+    child_rows = await db.execute_fetchall(
+        "SELECT start_time, end_time, text FROM transcript_segments WHERE parent_segment_id = ? ORDER BY start_time",
+        (original_id,),
+    )
+    assert len(child_rows) == 2
+    assert child_rows[0]["start_time"] == 0.0
+    assert child_rows[0]["end_time"] == 6.0
+    assert child_rows[1]["start_time"] == 6.0
+    assert child_rows[1]["end_time"] == 12.0
+    # All original words preserved across children
+    all_words = child_rows[0]["text"].split() + child_rows[1]["text"].split()
+    assert all_words == "a b c d e f g h i j k l".split()
+
+    # Verify re-diarize cleanup: delete children restores original-only state
+    await db.execute(
+        "DELETE FROM transcript_segments WHERE parent_segment_id IS NOT NULL AND session_id = ?",
+        (session_id,),
+    )
+    await db.commit()
+    remaining = await db.execute_fetchall(
+        "SELECT id FROM transcript_segments WHERE session_id = ?", (session_id,)
+    )
+    assert len(remaining) == 1
+    assert remaining[0]["id"] == original_id

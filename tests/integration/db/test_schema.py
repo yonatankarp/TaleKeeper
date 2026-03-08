@@ -66,6 +66,8 @@ EXPECTED_TABLES: dict[str, list[tuple[str, str]]] = {
         ("text", "TEXT"),
         ("start_time", "REAL"),
         ("end_time", "REAL"),
+        ("is_overlap", "INTEGER"),
+        ("parent_segment_id", "INTEGER"),
     ],
     "summaries": [
         ("id", "INTEGER"),

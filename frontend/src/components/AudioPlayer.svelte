@@ -1,6 +1,6 @@
 <script lang="ts">
-  type Props = { sessionId: number };
-  let { sessionId }: Props = $props();
+  type Props = { sessionId: number; onTimeUpdate?: (time: number) => void };
+  let { sessionId, onTimeUpdate }: Props = $props();
 
   let audioEl: HTMLAudioElement | undefined = $state();
 
@@ -15,7 +15,8 @@
 </script>
 
 <div class="audio-player">
-  <audio bind:this={audioEl} controls src={audioUrl} preload="metadata">
+  <audio bind:this={audioEl} controls src={audioUrl} preload="metadata"
+    ontimeupdate={() => onTimeUpdate?.(audioEl?.currentTime ?? 0)}>
     <track kind="captions" />
   </audio>
 </div>

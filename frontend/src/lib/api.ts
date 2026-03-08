@@ -139,6 +139,7 @@ export function reDiarize(
   onPhase: (phase: string) => void,
   onDone: (segmentsCount: number) => void,
   onError: (message: string) => void,
+  onProgress?: (detail: string) => void,
 ): { cancel: () => void } {
   let cancelled = false;
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -171,6 +172,7 @@ export function reDiarize(
           } else if (line.startsWith('data: ') && currentEvent) {
             const data = JSON.parse(line.slice(6));
             if (currentEvent === 'phase') onPhase(data.phase);
+            else if (currentEvent === 'progress') onProgress?.(data.detail ?? '');
             else if (currentEvent === 'done') onDone(data.segments_count);
             else if (currentEvent === 'error') onError(data.message || 'Re-diarization failed');
             currentEvent = '';

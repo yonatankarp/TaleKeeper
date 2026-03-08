@@ -106,6 +106,7 @@
   let hasAudio = $derived(session?.audio_path != null);
   let transcriptView: TranscriptView | undefined = $state();
   let exportSection: ExportSection | undefined = $state();
+  let audioCurrentTime = $state(0);
 
   function handleTranscriptSegment(seg: { text: string; start_time: number; end_time: number }) {
     transcriptView?.addLiveSegment(seg);
@@ -182,7 +183,7 @@
           <SpeakerPanel sessionId={sessionId} campaignId={session.campaign_id} hasAudio={hasAudio} onUpdate={() => transcriptView?.load()} />
         {/if}
         {#if hasAudio}
-          <AudioPlayer bind:this={audioPlayer} sessionId={sessionId} />
+          <AudioPlayer bind:this={audioPlayer} sessionId={sessionId} onTimeUpdate={(t) => audioCurrentTime = t} />
         {/if}
         <TranscriptView
           bind:this={transcriptView}
@@ -192,6 +193,7 @@
           {hasAudio}
           language={session.language}
           status={session.status}
+          currentTime={audioCurrentTime}
           onSegmentClick={handleSegmentClick}
         />
       </div>

@@ -254,10 +254,15 @@ async def re_diarize(session_id: int, body: ReDiarizeRequest) -> StreamingRespon
 
             yield _sse_event("phase", {"phase": "diarization"})
 
-            # Cleanup: NULL speaker_ids on transcript segments
+            # Cleanup: delete diarization-split children so original rows are restored,
+            # then reset speaker assignments on the originals
             async with get_db() as db:
                 await db.execute(
-                    "UPDATE transcript_segments SET speaker_id = NULL WHERE session_id = ?",
+                    "DELETE FROM transcript_segments WHERE session_id = ? AND parent_segment_id IS NOT NULL",
+                    (session_id,),
+                )
+                await db.execute(
+                    "UPDATE transcript_segments SET speaker_id = NULL, is_overlap = 0 WHERE session_id = ?",
                     (session_id,),
                 )
 

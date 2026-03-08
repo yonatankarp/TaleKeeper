@@ -35,6 +35,8 @@ async def _apply_schema(db: aiosqlite.Connection) -> None:
     await _migrate_invalidate_voice_signatures(db)
     await _migrate_add_similarity_threshold(db)
     await _migrate_add_mlx_settings(db)
+    await _migrate_add_is_overlap_column(db)
+    await _migrate_add_parent_segment_id_column(db)
 
 
 async def _migrate_add_session_number_column(db: aiosqlite.Connection) -> None:
@@ -190,6 +192,26 @@ async def _migrate_add_similarity_threshold(db: aiosqlite.Connection) -> None:
     if "similarity_threshold" not in col_names:
         await db.execute(
             "ALTER TABLE campaigns ADD COLUMN similarity_threshold REAL DEFAULT 0.75"
+        )
+
+
+async def _migrate_add_is_overlap_column(db: aiosqlite.Connection) -> None:
+    """Add is_overlap column to transcript_segments if missing."""
+    cols = await db.execute_fetchall("PRAGMA table_info(transcript_segments)")
+    col_names = [c["name"] for c in cols]
+    if "is_overlap" not in col_names:
+        await db.execute(
+            "ALTER TABLE transcript_segments ADD COLUMN is_overlap INTEGER NOT NULL DEFAULT 0"
+        )
+
+
+async def _migrate_add_parent_segment_id_column(db: aiosqlite.Connection) -> None:
+    """Add parent_segment_id to transcript_segments to track diarization-split children."""
+    cols = await db.execute_fetchall("PRAGMA table_info(transcript_segments)")
+    col_names = [c["name"] for c in cols]
+    if "parent_segment_id" not in col_names:
+        await db.execute(
+            "ALTER TABLE transcript_segments ADD COLUMN parent_segment_id INTEGER REFERENCES transcript_segments(id) ON DELETE CASCADE"
         )
 
 

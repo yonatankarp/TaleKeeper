@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { api, reDiarize } from '../lib/api';
   import LanguageSelect from './LanguageSelect.svelte';
 
@@ -9,9 +10,10 @@
     hasAudio?: boolean;
     language?: string;
     status?: string;
+    currentTime?: number;
     onSegmentClick?: (startTime: number) => void;
   };
-  let { sessionId, campaignId, isRecording = false, hasAudio = false, language = 'en', status, onSegmentClick }: Props = $props();
+  let { sessionId, campaignId, isRecording = false, hasAudio = false, language = 'en', status, currentTime = 0, onSegmentClick }: Props = $props();
 
   type Segment = {
     id: number;
@@ -19,6 +21,7 @@
     start_time: number;
     end_time: number;
     speaker_id: number | null;
+    is_overlap: boolean;
     diarization_label: string | null;
     player_name: string | null;
     character_name: string | null;
@@ -28,6 +31,7 @@
   let container: HTMLDivElement | undefined = $state();
   let transcribing = $state(false);
   let diarizing = $state(false);
+  let diarizeProgress = $state<string | null>(null);
   let error = $state<string | null>(null);
   let retranscribeLang = $state('en');
   let retranscribeNumSpeakers = $state(5);
@@ -36,6 +40,18 @@
   let copiedId = $state<number | null>(null);
 
   $effect(() => { retranscribeLang = language; });
+
+  let activeSegmentId = $derived(
+    currentTime > 0
+      ? segments.find(s => currentTime >= s.start_time && currentTime < s.end_time)?.id ?? null
+      : null
+  );
+
+  $effect(() => {
+    if (activeSegmentId == null) return;
+    const el = container?.querySelector(`[data-seg-id="${activeSegmentId}"]`);
+    el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  });
 
   $effect(() => {
     if (campaignId) {
@@ -48,10 +64,11 @@
   let filteredSegments = $derived(() => {
     if (!searchQuery.trim()) return segments;
     const q = searchQuery.toLowerCase();
-    return segments.filter(seg =>
-      seg.text.toLowerCase().includes(q) ||
-      speakerLabel(seg).toLowerCase().includes(q)
-    );
+    return segments.filter(seg => {
+      // [crosstalk] segments are excluded from speaker name search
+      if (seg.is_overlap) return seg.text.toLowerCase().includes(q);
+      return seg.text.toLowerCase().includes(q) || speakerLabel(seg).toLowerCase().includes(q);
+    });
   });
 
   export async function load() {
@@ -105,6 +122,7 @@
                 start_time: data.start_time,
                 end_time: data.end_time,
                 speaker_id: null,
+                is_overlap: false,
                 diarization_label: null,
                 player_name: null,
                 character_name: null,
@@ -135,27 +153,32 @@
     }
   }
 
-  function handleReDiarize() {
+  async function handleReDiarize() {
     if (!confirm('Re-diarize this session?\n\nThis will remove all current speaker assignments and session voice signatures. Transcript text will be preserved.')) {
       return;
     }
 
     diarizing = true;
+    diarizeProgress = null;
     error = null;
+    await tick(); // flush UI before the long-running fetch starts
 
     reDiarize(
       sessionId,
       retranscribeNumSpeakers,
-      (_phase) => {
-        // phase event received — diarization in progress
-      },
+      (_phase) => {},
       async (_segmentsCount) => {
         diarizing = false;
+        diarizeProgress = null;
         await load();
       },
       (message) => {
         error = message;
         diarizing = false;
+        diarizeProgress = null;
+      },
+      (detail) => {
+        diarizeProgress = detail;
       },
     );
   }
@@ -169,6 +192,7 @@
       start_time: seg.start_time,
       end_time: seg.end_time,
       speaker_id: null,
+      is_overlap: false,
       diarization_label: null,
       player_name: null,
       character_name: null,
@@ -240,14 +264,21 @@
   </div>
 {/if}
 
-{#if transcribing || ((status === 'audio_ready' || status === 'transcribing') && !transcribing)}
-  <div class="time-hint">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-    Transcription may take a few minutes, especially for longer sessions. Please be patient while the audio is being processed.
+{#if diarizing}
+  <div class="processing-banner">
+    <span class="processing-dot"></span>
+    {diarizeProgress ?? 'Identifying speakers — this may take several minutes for long sessions…'}
   </div>
 {/if}
 
-{#if hasAudio && !isRecording && status !== 'transcribing' && status !== 'audio_ready' && status !== 'diarizing'}
+{#if transcribing || diarizing || ((status === 'audio_ready' || status === 'transcribing') && !transcribing)}
+  <div class="time-hint">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+    {diarizing ? 'Speaker identification may take 20–30 minutes for long sessions. Please leave this page open.' : 'Transcription may take a few minutes, especially for longer sessions. Please be patient while the audio is being processed.'}
+  </div>
+{/if}
+
+{#if hasAudio && !isRecording && !diarizing && status !== 'transcribing' && status !== 'audio_ready' && status !== 'diarizing'}
   <div class="retranscribe-bar">
     <LanguageSelect compact value={retranscribeLang} onchange={(code) => (retranscribeLang = code)} />
     <label class="speakers-label">Speakers
@@ -299,13 +330,18 @@
       <div
         class="segment"
         class:clickable={hasAudio}
+        class:crosstalk={seg.is_overlap}
+        class:active={seg.id === activeSegmentId}
+        data-seg-id={seg.id}
         onclick={() => onSegmentClick?.(seg.start_time)}
         role={hasAudio ? 'button' : undefined}
         tabindex={hasAudio ? 0 : undefined}
         onkeydown={(e: KeyboardEvent) => { if (hasAudio && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onSegmentClick?.(seg.start_time); } }}
       >
         <span class="timestamp">{formatTime(seg.start_time)}</span>
-        {#if speakerLabel(seg)}
+        {#if seg.is_overlap}
+          <span class="speaker crosstalk-label">[crosstalk]</span>
+        {:else if speakerLabel(seg)}
           <span class="speaker">{speakerLabel(seg)}</span>
         {/if}
         <span class="text">{seg.text}</span>
@@ -400,6 +436,12 @@
     background: var(--bg-hover);
   }
 
+  .segment.active {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border-left: 3px solid var(--accent);
+    padding-left: calc(0.5rem - 3px);
+  }
+
   .segment.clickable {
     cursor: pointer;
   }
@@ -445,6 +487,16 @@
     font-weight: 600;
     font-size: 0.85rem;
     flex-shrink: 0;
+  }
+
+  .segment.crosstalk {
+    opacity: 0.55;
+  }
+
+  .crosstalk-label {
+    color: var(--text-faint) !important;
+    font-weight: 400 !important;
+    font-style: italic;
   }
 
   .text {

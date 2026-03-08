@@ -23,10 +23,18 @@ MIN_SEGMENT_DURATION = 0.4
 EMBEDDING_WINDOW = 1.2
 EMBEDDING_STEP = 0.6
 
+# Overlap detection constant
+OVERLAP_RATIO_THRESHOLD = 0.85
+
+# Post-clustering merge: clusters whose centroid cosine similarity exceeds this
+# threshold are considered the same speaker and merged. Prevents one speaker from
+# appearing as two "Player X" labels when their embeddings vary across the session.
+CLUSTER_MERGE_THRESHOLD = 0.75
+
 # Speaker change detection constants
 MIN_CHANGE_DETECTION_DURATION = 2.0
-CHANGE_DETECTION_WINDOW = 0.6
-CHANGE_DETECTION_STEP = 0.3
+CHANGE_DETECTION_WINDOW = 0.4
+CHANGE_DETECTION_STEP = 0.2
 CHANGE_DETECTION_THRESHOLD = 0.4
 CHANGE_DETECTION_MIN_SPLIT_GAP = 3
 
@@ -387,6 +395,139 @@ def _detect_speaker_changes(
     return refined
 
 
+def _merge_similar_clusters(
+    embeddings: np.ndarray,
+    labels: np.ndarray,
+    threshold: float = CLUSTER_MERGE_THRESHOLD,
+) -> np.ndarray:
+    """Merge speaker clusters whose centroids are too similar to be different people.
+
+    After spectral clustering, a single speaker can appear as two nearby clusters
+    because their voice embeddings drift across a long session. This function
+    computes pairwise cosine similarity between L2-normalized cluster centroids and
+    merges any pair above `threshold` using union-find, then remaps labels to
+    consecutive integers.
+
+    Args:
+        embeddings: (N, D) float32 array of speaker embeddings.
+        labels: (N,) integer cluster label array.
+        threshold: Cosine similarity above which two clusters are merged (default
+            CLUSTER_MERGE_THRESHOLD = 0.80).
+
+    Returns:
+        New (N,) label array with merged and remapped cluster labels.
+    """
+    unique = np.unique(labels)
+    if len(unique) < 2:
+        return labels.copy()
+
+    # Compute L2-normalized centroid per cluster
+    centroids: dict[int, np.ndarray] = {}
+    for lbl in unique:
+        mask = labels == lbl
+        c = embeddings[mask].mean(axis=0).astype(np.float64)
+        norm = np.linalg.norm(c)
+        centroids[lbl] = c / norm if norm > 1e-8 else c
+
+    # Union-find for transitive merges
+    parent = {lbl: lbl for lbl in unique}
+
+    def _find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    lbl_list = list(unique)
+    merged_count = 0
+    for i in range(len(lbl_list)):
+        for j in range(i + 1, len(lbl_list)):
+            a, b = lbl_list[i], lbl_list[j]
+            sim = float(centroids[a] @ centroids[b])
+            if sim >= threshold:
+                ra, rb = _find(a), _find(b)
+                if ra != rb:
+                    parent[rb] = ra
+                    merged_count += 1
+
+    if merged_count == 0:
+        return labels.copy()
+
+    # Apply merge map and remap to consecutive integers
+    roots = np.array([_find(int(l)) for l in labels])
+    unique_roots = np.unique(roots)
+    remap = {old: new for new, old in enumerate(unique_roots)}
+    new_labels = np.array([remap[r] for r in roots])
+    logger.info(
+        "Post-clustering merge: %d clusters -> %d clusters (%d merges, threshold=%.2f)",
+        len(unique), len(unique_roots), merged_count, threshold,
+    )
+    return new_labels
+
+
+def _flag_overlap_subsegments(
+    embeddings: np.ndarray,
+    labels: np.ndarray,
+    threshold: float = OVERLAP_RATIO_THRESHOLD,
+) -> np.ndarray:
+    """Return boolean mask: True for embeddings ambiguous between two speaker clusters.
+
+    For each embedding, computes cosine similarity to all cluster centroids.
+    If sim_to_second_best / sim_to_best >= threshold, the subsegment is flagged as overlap.
+
+    Args:
+        embeddings: (N, D) float32 array of WeSpeaker embeddings.
+        labels: (N,) cluster label array.
+        threshold: Overlap ratio threshold (default OVERLAP_RATIO_THRESHOLD).
+
+    Returns:
+        Boolean mask of shape (N,), True where subsegment is ambiguous (overlap).
+    """
+    n = len(labels)
+    if n == 0:
+        return np.zeros(0, dtype=bool)
+
+    unique_labels = np.unique(labels)
+    if len(unique_labels) < 2:
+        # Single cluster — no ambiguity possible
+        return np.zeros(n, dtype=bool)
+
+    # Compute L2-normalized centroid per cluster
+    centroids = []
+    for lbl in unique_labels:
+        mask = labels == lbl
+        centroid = np.mean(embeddings[mask], axis=0)
+        norm = np.linalg.norm(centroid)
+        if norm > 0:
+            centroid = centroid / norm
+        centroids.append(centroid)
+    centroid_matrix = np.stack(centroids)  # (num_clusters, D)
+
+    # Normalize embeddings for cosine similarity
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    norms = np.where(norms > 0, norms, 1.0)
+    normed_embeddings = embeddings / norms
+
+    # Cosine similarity to each centroid: (N, num_clusters)
+    sim_matrix = normed_embeddings @ centroid_matrix.T
+
+    # Best and second-best similarity per embedding
+    sorted_sims = np.sort(sim_matrix, axis=1)[:, ::-1]  # descending
+    best = sorted_sims[:, 0]
+    second = sorted_sims[:, 1]
+
+    # Flag as overlap if second/best >= threshold
+    safe_best = np.where(best > 0, best, 1.0)
+    overlap_mask = (best > 0) & (second / safe_best >= threshold)
+
+    num_flagged = int(np.sum(overlap_mask))
+    logger.debug(
+        "Overlap detection: flagged %d/%d subsegments as crosstalk (threshold=%.2f)",
+        num_flagged, n, threshold,
+    )
+    return overlap_mask
+
+
 def _extract_embeddings_with_progress(
     audio_path: Path,
     speech_segments: list,
@@ -477,6 +618,7 @@ def _build_segments_from_labels(
     speech_segments: list,
     subsegments: list[tuple[float, float, int]],
     labels: np.ndarray,
+    overlap_mask: np.ndarray | None = None,
 ) -> list[SpeakerSegment]:
     """Convert clustering labels into SpeakerSegments, merging adjacent same-speaker segments.
 
@@ -484,6 +626,7 @@ def _build_segments_from_labels(
         speech_segments: Original VAD speech segments.
         subsegments: List of (start, end, parent_idx) from embedding extraction.
         labels: Cluster labels array from cluster_speakers(), shape (N,).
+        overlap_mask: Optional boolean mask (N,); True entries get label "[crosstalk]".
 
     Returns:
         Merged list of SpeakerSegments.
@@ -493,9 +636,13 @@ def _build_segments_from_labels(
 
     # Build raw segments from subsegments + labels
     raw_segments = []
-    for (start, end, _parent_idx), label in zip(subsegments, labels):
+    for i, ((start, end, _parent_idx), label) in enumerate(zip(subsegments, labels)):
+        if overlap_mask is not None and overlap_mask[i]:
+            speaker_label = "[crosstalk]"
+        else:
+            speaker_label = f"SPEAKER_{label:02d}"
         raw_segments.append(SpeakerSegment(
-            speaker_label=f"SPEAKER_{label:02d}",
+            speaker_label=speaker_label,
             start_time=start,
             end_time=end,
         ))
@@ -565,6 +712,7 @@ def diarize(
         if num_speakers is not None:
             cluster_kwargs["num_speakers"] = num_speakers
         labels, _details = cluster_speakers(embeddings, **cluster_kwargs)
+        labels = _merge_similar_clusters(embeddings, labels)
         num_found_speakers = len(set(labels))
         logger.info("Clustering found %d speakers, %d segments", num_found_speakers, len(labels))
         if progress_callback:
@@ -573,7 +721,8 @@ def diarize(
                 "num_segments": len(labels),
             })
 
-        return _build_segments_from_labels(speech_segments, subsegments, labels)
+        overlap_mask = _flag_overlap_subsegments(embeddings, labels)
+        return _build_segments_from_labels(speech_segments, subsegments, labels, overlap_mask)
     finally:
         try:
             norm_path.unlink()
@@ -702,6 +851,7 @@ def diarize_with_signatures(
         if num_speakers is not None:
             cluster_kwargs["num_speakers"] = num_speakers
         labels, _details = cluster_speakers(embeddings, **cluster_kwargs)
+        labels = _merge_similar_clusters(embeddings, labels)
         num_found_speakers = len(set(labels))
         logger.info("Clustering found %d speakers", num_found_speakers)
         if progress_callback:
@@ -709,6 +859,9 @@ def diarize_with_signatures(
                 "num_speakers": num_found_speakers,
                 "num_segments": len(labels),
             })
+
+        # Overlap detection: flag ambiguous subsegments before signature matching
+        overlap_mask = _flag_overlap_subsegments(embeddings, labels)
 
         # Stage 5: Match speaker clusters to signatures via Hungarian algorithm
         # Hungarian guarantees a globally optimal 1:1 cluster→signature assignment.
@@ -755,11 +908,14 @@ def diarize_with_signatures(
             similarity_threshold,
         )
 
-        # Build output segments
+        # Build output segments; flagged subsegments get "[crosstalk]" (skip signature matching)
         raw_segments = []
-        for (start, end, _parent_idx), label in zip(subsegments, labels):
-            label_int = int(label)
-            mapped_label = label_map.get(label_int, "Unknown Speaker")
+        for i, ((start, end, _parent_idx), label) in enumerate(zip(subsegments, labels)):
+            if overlap_mask[i]:
+                mapped_label = "[crosstalk]"
+            else:
+                label_int = int(label)
+                mapped_label = label_map.get(label_int, "Unknown Speaker")
             raw_segments.append(SpeakerSegment(
                 speaker_label=mapped_label,
                 start_time=start,
@@ -773,6 +929,104 @@ def diarize_with_signatures(
             norm_path.unlink()
         except OSError:
             pass
+
+
+# Minimum duration (seconds) each child must have after splitting.
+# Below this threshold, splits are not created — the proportional word
+# distribution becomes too sparse and produces empty/single-word segments.
+MIN_SPLIT_CHILD_DURATION = 5.0
+
+
+def _split_transcript_segments(
+    transcript_segs: list[dict],
+    speaker_segs: list[SpeakerSegment],
+) -> list[dict]:
+    """Split transcript segments at diarization speaker-change boundaries.
+
+    Only splits where EVERY resulting child would be at least MIN_SPLIT_CHILD_DURATION
+    seconds long. Rapid back-and-forth exchanges shorter than that threshold cannot
+    be resolved without word-level timestamps and are left as a single segment
+    (assigned to the majority speaker by align_speakers_with_transcript).
+
+    Text is distributed proportionally by word count (relative to sub-interval duration).
+    All sub-segments become children (id=None) so the original DB row stays intact
+    for future re-diarize runs.
+
+    Args:
+        transcript_segs: List of dicts with id, session_id, text, start_time, end_time.
+        speaker_segs: List of SpeakerSegment objects from diarization.
+
+    Returns:
+        Expanded list of transcript segment dicts (may be longer than input).
+    """
+    result: list[dict] = []
+
+    for t_seg in transcript_segs:
+        t_start = t_seg["start_time"]
+        t_end = t_seg["end_time"]
+
+        # Collect diarization start-times that fall strictly inside this segment
+        all_split_points = sorted({
+            s.start_time for s in speaker_segs
+            if t_start < s.start_time < t_end
+        })
+
+        if not all_split_points:
+            result.append(t_seg)
+            continue
+
+        # Filter: greedily keep only split points that are at least
+        # MIN_SPLIT_CHILD_DURATION seconds from the previous kept point.
+        valid_split_points: list[float] = []
+        prev = t_start
+        for pt in all_split_points:
+            if pt - prev >= MIN_SPLIT_CHILD_DURATION:
+                valid_split_points.append(pt)
+                prev = pt
+
+        # Also drop the last split point if the final interval would be too short.
+        while valid_split_points and t_end - valid_split_points[-1] < MIN_SPLIT_CHILD_DURATION:
+            valid_split_points.pop()
+
+        if not valid_split_points:
+            result.append(t_seg)
+            continue
+
+        # Build final sub-intervals
+        boundaries = [t_start] + valid_split_points + [t_end]
+        merged: list[tuple[float, float]] = [
+            (boundaries[i], boundaries[i + 1]) for i in range(len(boundaries) - 1)
+        ]
+
+        # Split text proportionally by word count
+        words = (t_seg.get("text") or "").split()
+        total_duration = t_end - t_start
+        word_chunks: list[list[str]] = []
+        remaining = words[:]
+        for start, end in merged[:-1]:
+            proportion = (end - start) / total_duration if total_duration > 0 else 1.0 / len(merged)
+            n = max(0, min(round(proportion * len(words)), len(remaining)))
+            word_chunks.append(remaining[:n])
+            remaining = remaining[n:]
+        word_chunks.append(remaining)
+
+        # Original row is superseded — all sub-segments become children (id=None)
+        # so the original row stays intact in the DB for future re-diarize runs.
+        original_id = t_seg["id"]
+        for (start, end), chunk in zip(merged, word_chunks):
+            child = dict(t_seg)
+            child["id"] = None
+            child["parent_segment_id"] = original_id
+            child["start_time"] = start
+            child["end_time"] = end
+            child["text"] = " ".join(chunk)
+            result.append(child)
+
+    logger.debug(
+        "Transcript split: %d segments -> %d segments at diarization boundaries",
+        len(transcript_segs), len(result),
+    )
+    return result
 
 
 def _merge_segments(raw_segments: list[SpeakerSegment]) -> list[SpeakerSegment]:
@@ -818,11 +1072,18 @@ def align_speakers_with_transcript(
                 overlapping.append((s_seg, overlap_end - overlap_start))
 
         if not overlapping:
+            t_seg["is_overlap"] = 0
             aligned.append(t_seg)
             continue
 
         overlapping.sort(key=lambda x: x[1], reverse=True)
-        t_seg["speaker_label"] = overlapping[0][0].speaker_label
+        best_seg = overlapping[0][0]
+        if best_seg.speaker_label == "[crosstalk]":
+            t_seg["is_overlap"] = 1
+            # Don't assign speaker_label — segment stays unassigned
+        else:
+            t_seg["is_overlap"] = 0
+            t_seg["speaker_label"] = best_seg.speaker_label
         aligned.append(t_seg)
 
     return aligned
@@ -978,7 +1239,7 @@ async def run_final_diarization(
             speaker_id_map = {}
             for seg in segments:
                 label = seg.speaker_label
-                if label in speaker_id_map:
+                if label == "[crosstalk]" or label in speaker_id_map:
                     continue
 
                 if label.startswith("roster_"):
@@ -998,22 +1259,54 @@ async def run_final_diarization(
                 speaker_id_map[label] = cursor.lastrowid
 
             t_rows = await db.execute_fetchall(
-                "SELECT id, start_time, end_time FROM transcript_segments WHERE session_id = ? ORDER BY start_time",
+                "SELECT id, session_id, text, start_time, end_time FROM transcript_segments WHERE session_id = ? ORDER BY start_time",
                 (session_id,),
             )
             transcript_segs = [dict(r) for r in t_rows]
+            transcript_segs = _split_transcript_segments(transcript_segs, segments)
             aligned = align_speakers_with_transcript(segments, transcript_segs)
 
             for seg in aligned:
+                is_overlap = seg.get("is_overlap", 0)
                 label = seg.get("speaker_label")
-                if label and label in speaker_id_map:
+                if seg.get("id") is not None:
+                    if is_overlap:
+                        await db.execute(
+                            "UPDATE transcript_segments SET speaker_id = NULL, is_overlap = 1 WHERE id = ?",
+                            (seg["id"],),
+                        )
+                    elif label and label in speaker_id_map:
+                        await db.execute(
+                            "UPDATE transcript_segments SET speaker_id = ?, is_overlap = 0 WHERE id = ?",
+                            (speaker_id_map[label], seg["id"]),
+                        )
+                    else:
+                        await db.execute(
+                            "UPDATE transcript_segments SET is_overlap = 0 WHERE id = ?",
+                            (seg["id"],),
+                        )
+                else:
+                    speaker_id_val = speaker_id_map.get(label) if (label and not is_overlap) else None
                     await db.execute(
-                        "UPDATE transcript_segments SET speaker_id = ? WHERE id = ?",
-                        (speaker_id_map[label], seg["id"]),
+                        """INSERT INTO transcript_segments
+                           (session_id, parent_segment_id, speaker_id, text, start_time, end_time, is_overlap)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            seg["session_id"],
+                            seg.get("parent_segment_id"),
+                            speaker_id_val,
+                            seg.get("text", ""),
+                            seg["start_time"],
+                            seg["end_time"],
+                            1 if is_overlap else 0,
+                        ),
                     )
     else:
         segments = diarize(wav_path, num_speakers, progress_callback=progress_callback)
-        unique_labels = sorted(set(s.speaker_label for s in segments))
+        # Exclude [crosstalk] from speaker creation
+        unique_labels = sorted(set(
+            s.speaker_label for s in segments if s.speaker_label != "[crosstalk]"
+        ))
 
         async with get_db() as db:
             speaker_id_map = {}
@@ -1033,16 +1326,45 @@ async def run_final_diarization(
                     speaker_id_map[label] = cursor.lastrowid
 
             t_rows = await db.execute_fetchall(
-                "SELECT id, start_time, end_time FROM transcript_segments WHERE session_id = ? ORDER BY start_time",
+                "SELECT id, session_id, text, start_time, end_time FROM transcript_segments WHERE session_id = ? ORDER BY start_time",
                 (session_id,),
             )
             transcript_segs = [dict(r) for r in t_rows]
+            transcript_segs = _split_transcript_segments(transcript_segs, segments)
             aligned = align_speakers_with_transcript(segments, transcript_segs)
 
             for seg in aligned:
+                is_overlap = seg.get("is_overlap", 0)
                 label = seg.get("speaker_label")
-                if label and label in speaker_id_map:
+                if seg.get("id") is not None:
+                    if is_overlap:
+                        await db.execute(
+                            "UPDATE transcript_segments SET speaker_id = NULL, is_overlap = 1 WHERE id = ?",
+                            (seg["id"],),
+                        )
+                    elif label and label in speaker_id_map:
+                        await db.execute(
+                            "UPDATE transcript_segments SET speaker_id = ?, is_overlap = 0 WHERE id = ?",
+                            (speaker_id_map[label], seg["id"]),
+                        )
+                    else:
+                        await db.execute(
+                            "UPDATE transcript_segments SET is_overlap = 0 WHERE id = ?",
+                            (seg["id"],),
+                        )
+                else:
+                    speaker_id_val = speaker_id_map.get(label) if (label and not is_overlap) else None
                     await db.execute(
-                        "UPDATE transcript_segments SET speaker_id = ? WHERE id = ?",
-                        (speaker_id_map[label], seg["id"]),
+                        """INSERT INTO transcript_segments
+                           (session_id, parent_segment_id, speaker_id, text, start_time, end_time, is_overlap)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            seg["session_id"],
+                            seg.get("parent_segment_id"),
+                            speaker_id_val,
+                            seg.get("text", ""),
+                            seg["start_time"],
+                            seg["end_time"],
+                            1 if is_overlap else 0,
+                        ),
                     )

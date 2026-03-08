@@ -26,6 +26,7 @@ dependencies = [
     "python-multipart>=0.0.18",
     "openai>=1.0",
     "requests>=2.30",
+    "torchcodec>=0.1",
     "scipy>=1.10",
     "pymupdf>=1.24",
 ]

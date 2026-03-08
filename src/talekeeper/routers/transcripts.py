@@ -33,10 +33,17 @@ async def get_transcript(session_id: int) -> list[dict]:
     async with get_db() as db:
         rows = await db.execute_fetchall(
             """SELECT ts.id, ts.session_id, ts.speaker_id, ts.text, ts.start_time, ts.end_time,
-                      s.diarization_label, s.player_name, s.character_name
+                      ts.is_overlap, s.diarization_label, s.player_name, s.character_name
                FROM transcript_segments ts
                LEFT JOIN speakers s ON s.id = ts.speaker_id
                WHERE ts.session_id = ?
+                 AND (
+                   ts.parent_segment_id IS NOT NULL
+                   OR NOT EXISTS (
+                     SELECT 1 FROM transcript_segments c
+                     WHERE c.parent_segment_id = ts.id
+                   )
+                 )
                ORDER BY ts.start_time""",
             (session_id,),
         )
