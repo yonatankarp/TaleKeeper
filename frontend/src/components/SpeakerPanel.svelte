@@ -435,6 +435,7 @@
 
   .batch-row .speaker-badge {
     flex-shrink: 0;
+    cursor: help;
     margin-top: 0.3rem;
   }
 
