@@ -11,7 +11,7 @@ The **Visions** tab (++4++) lets you generate AI artwork depicting dramatic mome
 Image generation is a two-step process:
 
 1. **Scene Crafting** — an LLM reads your transcript and crafts a vivid scene description focusing on one dramatic moment
-2. **Image Generation** — the description is rendered locally using mflux, an MLX-native FLUX image model running on your Apple Silicon Mac
+2. **Image Generation** — the description is used to create an image directly on your Mac, with no internet connection required
 
 ### Generating an Image
 
@@ -41,8 +41,8 @@ Image generation is a two-step process:
 
 ### Requirements
 
-- **Apple Silicon Mac (M1+)** — mflux runs natively on Apple Silicon, no external server needed
-- An **LLM provider** is needed for scene description crafting (see [Settings](../settings/index.md))
+- **Apple Silicon Mac (M1+)** — image generation runs directly on your Mac, no external service needed
+- A connected **AI assistant** is needed to craft the scene description (see [Settings](../settings/index.md))
 - Image quality can be tuned via **Steps** and **Guidance Scale** in Settings
 
 Next: [Export Your Work →](../export/index.md)

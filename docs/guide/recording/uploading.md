@@ -16,12 +16,12 @@ TaleKeeper accepts common audio formats and automatically converts them for proc
 
 ### What Happens Next
 
-After upload, the same processing pipeline runs automatically:
+After upload, TaleKeeper automatically:
 
-1. Audio conversion (mono, 16kHz WAV)
-2. Transcription
-3. Speaker diarization
-4. Auto session naming
+1. Prepares the audio for processing
+2. Converts speech to text
+3. Identifies speakers
+4. Suggests a session title
 
 !!! warning "Replacing Audio"
     Uploading new audio to a session that already has a recording will **replace** the previous audio and clear the existing transcript and speaker assignments. Summaries and images are preserved.

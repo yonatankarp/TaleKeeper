@@ -26,10 +26,10 @@
 
 ### Progress Tracking
 
-Retranscription streams progress via the same phases:
+You'll see live progress updates through the same phases as the original:
 
-- Transcription chunk progress with ETA
-- Speaker diarization
-- Auto session naming (if the name was still generic)
+- Transcription progress with estimated time remaining
+- Speaker identification
+- Session naming (if the name was still generic)
 
 Next: [Assign Speaker Names →](../speakers/index.md)

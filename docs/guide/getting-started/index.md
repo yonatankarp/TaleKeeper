@@ -44,7 +44,7 @@ This starts the server at `http://localhost:8000` and opens your browser automat
     |------|-------------|
     | `--host <address>` | Bind to a specific address (default: `127.0.0.1`) |
     | `--port <number>` | Use a different port (default: `8000`) |
-    | `--reload` | Auto-reload on code changes (development) |
+    | `--reload` | Restart automatically when settings change (for development) |
     | `--no-browser` | Don't open the browser on startup |
 
 ### Optional: Set Up Ollama
@@ -57,11 +57,11 @@ ollama pull llama3.1:8b        # For text generation
 ```
 
 !!! note "No Ollama? No Problem"
-    Recording, transcription, speaker identification, and image generation all work without Ollama. You only need an LLM provider for summaries, session naming, and scene description crafting.
+    Recording, transcription, speaker identification, and image generation all work without Ollama. You only need an AI assistant for summaries, session naming, and scene description crafting.
 
-### Optional: HuggingFace Token for Speaker Diarization
+### Optional: HuggingFace Token for Speaker Identification
 
-Speaker diarization (identifying who spoke when) uses pyannote.audio, which requires a free HuggingFace token:
+Automatic speaker identification (figuring out who said what) requires a free HuggingFace token:
 
 1. Create an account at [huggingface.co](https://huggingface.co)
 2. Accept the pyannote model license at [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)

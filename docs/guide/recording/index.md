@@ -32,12 +32,11 @@ You can:
 
 When you stop recording, TaleKeeper automatically:
 
-1. Merges audio chunks into a single file
-2. Converts to the format needed for transcription
-3. Runs VAD (Voice Activity Detection) to filter non-speech audio
-4. Runs speech-to-text (Whisper)
-5. Runs speaker diarization (identifies who spoke when)
-6. Generates an AI session name (if an LLM is configured)
+1. Combines your recording into one complete file
+2. Filters out silences and background noise
+3. Converts speech to text
+4. Identifies which parts belong to which speaker
+5. Suggests a session title (if an AI assistant is connected)
 
 A progress bar shows the current phase:
 
@@ -50,7 +49,7 @@ A progress bar shows the current phase:
 !!! tip "Hidden Feature: One-Click Full Pipeline"
     After recording and processing are complete, a **Process All** button appears. Click it to run the entire pipeline in sequence: transcription → diarization → summaries → image generation. Progress phases light up as each step completes, and a final summary shows how many segments, summaries, and images were created.
 
-    Process All is available when a session has audio (`audio_ready` or `completed` status) and no other processing is running.
+    Process All is available once a session has been recorded or has audio uploaded, as long as no other processing is currently running.
 
 !!! tip "Hidden Feature: Speaker Count Override"
     You can adjust the speaker count right before stopping — useful if unexpected guests joined or someone left early.

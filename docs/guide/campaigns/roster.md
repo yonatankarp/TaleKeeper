@@ -4,7 +4,7 @@
 
 The **roster** tracks your campaign's characters — their names, players, and visual descriptions. This information enriches summaries, illustrations, and speaker identification.
 
-![Roster page showing character entries with player names, character names, descriptions, and action buttons for Upload PDF, Import URL, Deactivate, Edit, and Remove](../images/roster-page.png)
+![Roster page showing character entries with player names, character names, descriptions, Voice ID badges, and action buttons for Upload Voice, Upload PDF, Import URL, Deactivate, Edit, and Remove](../images/roster-page.png)
 
 ### Adding Characters Manually
 
@@ -46,6 +46,22 @@ Click **Add Character** and fill in:
 
 !!! tip "Hidden Feature"
     Click **Refresh** on a roster entry to re-fetch and re-extract the description from the stored URL. Useful after character changes or level-ups.
+
+### Uploading a Voice Sample
+
+!!! tip "Hidden Feature"
+    Teach TaleKeeper your players' voices **before you even start recording**. Upload a short audio clip of each player talking, and TaleKeeper will automatically recognize them in future sessions.
+
+1. Find the player's entry on the roster
+2. Click **Upload Voice**
+3. Select an audio file — a voice memo, a clip from an old recording, or anything with that player speaking for 30 seconds to 2 minutes
+4. TaleKeeper processes the clip and creates a voice profile
+
+Once uploaded, a green **Voice ID** badge appears next to the character's name. In future sessions, TaleKeeper uses these profiles to automatically identify who's speaking.
+
+To replace a voice sample with a better one, click **Replace Voice** (the button changes label once a signature exists).
+
+See [Voice Signatures](../speakers/voice-signatures.md) for more details on how automatic speaker recognition works.
 
 ### Active vs Inactive Characters
 

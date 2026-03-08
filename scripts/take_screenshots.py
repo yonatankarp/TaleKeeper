@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import signal
@@ -30,7 +31,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 GUIDE_IMG_DIR = PROJECT_ROOT / "docs" / "guide" / "images"
-VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
+VENV_PYTHON = PROJECT_ROOT / "venv" / "bin" / "python"
 SERVER_PORT = 8099
 SERVER_URL = f"http://127.0.0.1:{SERVER_PORT}"
 APP_URL = f"{SERVER_URL}/#"
@@ -187,6 +188,18 @@ async def seed_database(db_path: Path, data_dir: Path) -> dict:
             )
             roster_ids[char] = cur.lastrowid
 
+        # -- Voice Signatures (for Theron and Elara) --
+        await db.execute(
+            "INSERT INTO voice_signatures (campaign_id, roster_entry_id, embedding, num_samples, created_at) "
+            "VALUES (?, ?, ?, ?, datetime('now'))",
+            (campaign_id, roster_ids["Theron Ashford"], json.dumps([0.1] * 192), 12),
+        )
+        await db.execute(
+            "INSERT INTO voice_signatures (campaign_id, roster_entry_id, embedding, num_samples, created_at) "
+            "VALUES (?, ?, ?, ?, datetime('now'))",
+            (campaign_id, roster_ids["Elara Moonwhisper"], json.dumps([0.2] * 192), 8),
+        )
+
         # -- Session 1 (completed, with everything) --
         cur = await db.execute(
             "INSERT INTO sessions (campaign_id, name, date, status, language, session_number) "
@@ -221,6 +234,13 @@ async def seed_database(db_path: Path, data_dir: Path) -> dict:
                 "VALUES (?, ?, ?, ?, ?)",
                 (session1_id, speaker_ids[label], text, start, end),
             )
+
+        # Crosstalk segment
+        await db.execute(
+            "INSERT INTO transcript_segments (session_id, speaker_id, text, start_time, end_time, is_overlap) "
+            "VALUES (?, NULL, '[crosstalk]', 37.0, 37.5, 1)",
+            (session1_id,),
+        )
 
         # Summaries
         await db.execute(
@@ -434,7 +454,12 @@ async def capture_screenshots(ids: dict, db_path: Path) -> None:
         await goto_session_tab(session1_id, "2")
         await screenshot("chronicle-tab")
 
-        # Speaker panel (same page, already visible)
+        # Expand the Speakers panel (starts collapsed) then screenshot
+        try:
+            await page.click('.speaker-panel .panel-header', timeout=3000)
+            await page.wait_for_timeout(500)
+        except Exception as e:
+            print(f"  could not expand speakers panel: {e}")
         await screenshot("speaker-panel")
 
         # ---------------------------------------------------------------
@@ -477,9 +502,15 @@ async def capture_screenshots(ids: dict, db_path: Path) -> None:
         # 11. Settings page
         # ---------------------------------------------------------------
         print("\n--- Settings ---")
+        # Use a tall viewport so the SPA's scrollable container shows all content
+        await page.set_viewport_size({"width": 1440, "height": 2400})
         await page.goto(f"{APP_URL}/settings")
         await page.wait_for_timeout(1000)
-        await screenshot("settings-page")
+        path = GUIDE_IMG_DIR / "settings-page.png"
+        await page.screenshot(path=str(path))
+        print(f"  captured: settings-page.png (tall viewport)")
+        # Restore normal viewport
+        await page.set_viewport_size({"width": 1440, "height": 900})
 
         # ---------------------------------------------------------------
         # 12. Setup Wizard (last, since it requires removing setup_dismissed)

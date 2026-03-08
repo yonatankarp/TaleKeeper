@@ -23,7 +23,7 @@ POV journals are generated alongside full summaries. When you click **Generate S
 ### Requirements
 
 - Speakers must have **character names** assigned (not just "Player 1")
-- An **LLM provider** must be configured
+- An **AI assistant** must be connected (see [Settings](../settings/index.md))
 - Character descriptions from the roster enhance the writing quality
 
 Next: [Generate Scene Illustrations →](../illustrations/index.md)

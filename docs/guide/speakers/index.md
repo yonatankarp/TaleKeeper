@@ -2,9 +2,12 @@
 
 ## Naming the Voices
 
-After transcription, TaleKeeper's diarization identifies distinct speakers and labels them as "Player 1", "Player 2", etc. Your job is to assign real names.
+After transcription, TaleKeeper identifies distinct speakers and labels them as "Player 1", "Player 2", etc. Your job is to assign real names.
 
-![Chronicle tab showing the transcript with color-coded speaker labels, timestamps, audio player, and Retranscribe / Re-diarize buttons](../images/speaker-panel.png)
+!!! info "Automatic Recognition"
+    If you've set up [voice signatures](voice-signatures.md) for your roster, TaleKeeper may have already identified some or all speakers automatically. You'll see their character names instead of generic labels.
+
+![Chronicle tab showing the transcript with color-coded speaker labels, VS badges, timestamps, audio player, Edit All, Generate Voice Signatures, Retranscribe, and Re-diarize buttons](../images/speaker-panel.png)
 
 ### Assigning Names
 
@@ -14,7 +17,11 @@ For each detected speaker:
 2. Set the **Character Name** (their in-game persona)
 
 !!! tip "Roster Suggestions"
-    If you've set up your [Character Roster](../campaigns/roster.md), a dropdown suggests names from your campaign's active roster members. No need to type — just select.
+    If you've set up your [Character Roster](../campaigns/roster.md), quick-fill buttons suggest names from your active roster. Click one to instantly assign both the player and character name.
+
+### Edit All Speakers at Once
+
+Instead of editing speakers one by one, click **Edit All** in the speaker panel header. This opens every speaker for editing at once, with roster suggestion buttons for quick assignment. Much faster when you need to label a full party.
 
 ### Reassigning Segments
 
@@ -35,6 +42,16 @@ Sometimes diarization assigns a segment to the wrong speaker. You can fix this:
 
     - The speaker count was wrong
     - Speakers were sitting too close together
-    - Background noise confused the algorithm
+    - Background noise made it hard to tell speakers apart
+
+### Generating Voice Signatures
+
+Once you've labeled all speakers and matched them to roster entries, you can teach TaleKeeper to recognize their voices in future sessions:
+
+1. Expand the **Speakers** panel
+2. Click the green **Generate Voice Signatures** button
+3. TaleKeeper analyzes each speaker's audio and builds a voice profile
+
+Speakers with stored voice signatures show a green **VS** badge. See [Voice Signatures](voice-signatures.md) for the full guide.
 
 Next: [Merge Duplicate Speakers →](merging.md)

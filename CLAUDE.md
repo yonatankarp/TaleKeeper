@@ -105,3 +105,4 @@ D&D session recording, transcription, and summarization app. FastAPI backend + S
 - **Always use OpenSpec** for planning and tracking changes — never use `docs/plans/` directly
 - **Archiving an OpenSpec change must commit and push** — after archiving, automatically commit all changes and push to remote
 - **Always use a git worktree when developing a new spec** — work in an isolated worktree so multiple agents can work on different specs in parallel without conflicts
+- **Document new features in `docs/guide/`** — when adding or changing user-facing functionality, update the relevant guide pages. Write from the **user's perspective** (a D&D player, not a developer): describe what they see and do, not how it's implemented. Avoid internal terms like API endpoints, library names, model architectures, or code concepts. Add new features to the hidden features table in `tips-and-tricks.md`. Run `make docs-build` to verify.

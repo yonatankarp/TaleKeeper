@@ -15,7 +15,7 @@ The **Tales** tab (++3++) is where AI transforms your raw transcript into a poli
 The summary appears as a narrative recap — written in prose, covering the key events, decisions, and dramatic moments of your session.
 
 !!! info "How It Works"
-    TaleKeeper sends your transcript (or a representative sample for very long sessions) to your configured LLM along with character descriptions from your roster. The AI generates a narrative summary in the session's language.
+    TaleKeeper sends your transcript to your connected AI assistant, along with character descriptions from your roster. The AI generates a narrative summary in the session's language.
 
 ### Editing Summaries
 

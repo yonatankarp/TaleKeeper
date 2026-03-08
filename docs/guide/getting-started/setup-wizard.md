@@ -23,19 +23,19 @@ Connect an AI provider for summaries and session naming.
 
 | Field | Description | Example |
 |-------|-------------|---------|
-| Base URL | Your provider's API endpoint | `http://localhost:11434/v1` |
-| API Key | Authentication key (optional for Ollama) | — |
+| Base URL | Your AI service's address | `http://localhost:11434/v1` |
+| API Key | Access key (not needed for Ollama) | — |
 | Model | Which model to use | `llama3.1:8b` |
 
 !!! info "Supported Providers"
-    TaleKeeper works with any **OpenAI-compatible** API:
+    TaleKeeper works with a range of AI services:
 
-    - **Ollama** (local, free) — recommended for getting started
+    - **Ollama** (runs on your computer, free) — recommended for most users
     - **OpenAI** — use your API key with models like `gpt-4o`
-    - **Any OpenAI-compatible service** — LM Studio, vLLM, etc.
+    - **Other services** — LM Studio and similar tools also work
 
 !!! info "Image Generation"
-    Scene illustrations are generated locally using mflux on Apple Silicon — no additional setup required. The wizard checks that mflux is available and shows a ✓ when ready.
+    Scene illustrations are generated directly on your Mac — no additional setup required. The wizard checks that everything needed is installed and shows a ✓ when ready.
 
 ### Finishing Up
 
