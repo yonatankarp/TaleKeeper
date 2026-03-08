@@ -4,11 +4,12 @@ import json
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from talekeeper.db import get_db
+from talekeeper.services.diarization import enroll_speaker_voice
 
 router = APIRouter(tags=["speakers"])
 
@@ -51,13 +52,17 @@ async def list_speakers(session_id: int) -> list[dict]:
 
 
 @router.put("/api/speakers/{speaker_id}")
-async def update_speaker(speaker_id: int, body: SpeakerUpdate) -> dict:
+async def update_speaker(
+    speaker_id: int, body: SpeakerUpdate, background_tasks: BackgroundTasks
+) -> dict:
     async with get_db() as db:
         existing = await db.execute_fetchall(
             "SELECT * FROM speakers WHERE id = ?", (speaker_id,)
         )
         if not existing:
             raise HTTPException(status_code=404, detail="Speaker not found")
+
+        session_id = existing[0]["session_id"]
 
         fields = []
         values = []
@@ -78,7 +83,14 @@ async def update_speaker(speaker_id: int, body: SpeakerUpdate) -> dict:
         rows = await db.execute_fetchall(
             "SELECT * FROM speakers WHERE id = ?", (speaker_id,)
         )
-    return dict(rows[0])
+        updated = dict(rows[0])
+
+    player_name = updated.get("player_name")
+    character_name = updated.get("character_name")
+    if player_name and character_name:
+        background_tasks.add_task(enroll_speaker_voice, speaker_id, session_id)
+
+    return updated
 
 
 @router.put("/api/transcript-segments/{segment_id}/speaker")

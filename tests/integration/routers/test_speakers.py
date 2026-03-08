@@ -318,3 +318,89 @@ async def test_re_diarize_no_audio(client: AsyncClient) -> None:
     )
     assert resp.status_code == 400
     assert "No audio" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Enrollment background task triggering (tasks 2.2 & 2.3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_update_speaker_triggers_enrollment_when_roster_matches(
+    client: AsyncClient,
+) -> None:
+    """Enrollment is scheduled as a background task when speaker matches an active roster entry."""
+    async with get_db() as db:
+        ids = await _seed(db)
+
+    enroll_calls = []
+
+    async def fake_enroll(speaker_id: int, session_id: int) -> None:
+        enroll_calls.append((speaker_id, session_id))
+
+    with patch(
+        "talekeeper.routers.speakers.enroll_speaker_voice", side_effect=fake_enroll
+    ):
+        # speaker_a already has player_name="Alice", character_name="Gandalf" which matches roster
+        resp = await client.put(
+            f"/api/speakers/{ids['speaker_a']}",
+            json={"player_name": "Alice", "character_name": "Gandalf"},
+        )
+
+    assert resp.status_code == 200
+    # Background task should have been registered and run (httpx runs them synchronously)
+    assert len(enroll_calls) == 1
+    assert enroll_calls[0][0] == ids["speaker_a"]
+
+
+@pytest.mark.asyncio
+async def test_update_speaker_does_not_trigger_enrollment_when_names_incomplete(
+    client: AsyncClient,
+) -> None:
+    """Enrollment is NOT triggered when updated speaker still lacks player or character name."""
+    async with get_db() as db:
+        ids = await _seed(db)
+
+    enroll_calls = []
+
+    async def fake_enroll(speaker_id: int, session_id: int) -> None:
+        enroll_calls.append((speaker_id, session_id))
+
+    with patch(
+        "talekeeper.routers.speakers.enroll_speaker_voice", side_effect=fake_enroll
+    ):
+        # Only set player_name, leave character_name as the existing "Gandalf"
+        # Test with speaker_b which has player_name="Bob" / character_name="Frodo"
+        # We clear the character_name by setting only player_name to something new
+        resp = await client.put(
+            f"/api/speakers/{ids['speaker_b']}",
+            json={"player_name": "Bob"},  # character_name remains "Frodo" — no roster entry
+        )
+
+    assert resp.status_code == 200
+    # enroll_speaker_voice will be called but will find no roster match; that's the service's
+    # responsibility. The router triggers whenever both names are present post-update.
+    # For the "no roster" case we verify via enroll_speaker_voice's no-op path.
+    # Here we verify enrollment is NOT triggered when character_name is missing entirely.
+
+    async with get_db() as db:
+        cursor = await db.execute(
+            "INSERT INTO speakers (session_id, diarization_label) VALUES (?, 'SPEAKER_02')",
+            (ids["session_id"],),
+        )
+        new_speaker_id = cursor.lastrowid
+        await db.commit()
+
+    enroll_calls.clear()
+
+    with patch(
+        "talekeeper.routers.speakers.enroll_speaker_voice", side_effect=fake_enroll
+    ):
+        # Update without character_name — speaker has no character_name in DB
+        resp = await client.put(
+            f"/api/speakers/{new_speaker_id}",
+            json={"player_name": "Carol"},
+        )
+
+    assert resp.status_code == 200
+    assert len(enroll_calls) == 0, "Should not trigger enrollment when character_name is missing"

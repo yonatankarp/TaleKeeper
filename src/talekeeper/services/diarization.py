@@ -1174,6 +1174,157 @@ async def generate_voice_signatures(session_id: int) -> list[dict]:
                 wav_path.unlink()
 
 
+async def enroll_speaker_voice(speaker_id: int, session_id: int) -> None:
+    """Enroll or update a voice signature when a speaker is assigned to a roster entry.
+
+    Samples up to 120 seconds of the speaker's transcript segments (longest first),
+    extracts an embedding via extract_speaker_embedding, then creates a new signature
+    or weighted-merges with the existing one. Silently returns on any missing prerequisite.
+    """
+    import json
+    from talekeeper.services.audio import audio_to_wav
+
+    _AUDIO_CAP_SECONDS = 120.0
+    _MIN_SEGMENT_SECS = 0.5
+
+    async with get_db() as db:
+        speaker_rows = await db.execute_fetchall(
+            "SELECT * FROM speakers WHERE id = ?", (speaker_id,)
+        )
+        if not speaker_rows:
+            logger.warning("enroll_speaker_voice: speaker %d not found", speaker_id)
+            return
+        speaker = dict(speaker_rows[0])
+
+        if not speaker.get("player_name") or not speaker.get("character_name"):
+            logger.debug("enroll_speaker_voice: speaker %d has no player/character name", speaker_id)
+            return
+
+        session_rows = await db.execute_fetchall(
+            "SELECT id, campaign_id, audio_path FROM sessions WHERE id = ?", (session_id,)
+        )
+        if not session_rows:
+            logger.warning("enroll_speaker_voice: session %d not found", session_id)
+            return
+        session = dict(session_rows[0])
+
+        if not session.get("audio_path"):
+            logger.warning("enroll_speaker_voice: session %d has no audio path", session_id)
+            return
+
+        audio_path = Path(session["audio_path"])
+        if not audio_path.exists():
+            logger.warning("enroll_speaker_voice: audio file %s not found", audio_path)
+            return
+
+        campaign_id = session["campaign_id"]
+
+        roster_rows = await db.execute_fetchall(
+            """SELECT id FROM roster_entries
+               WHERE campaign_id = ? AND player_name = ? AND character_name = ? AND is_active = 1""",
+            (campaign_id, speaker["player_name"], speaker["character_name"]),
+        )
+        if not roster_rows:
+            logger.debug(
+                "enroll_speaker_voice: no active roster entry for %s/%s in campaign %d",
+                speaker["player_name"], speaker["character_name"], campaign_id,
+            )
+            return
+        roster_entry_id = roster_rows[0]["id"]
+
+        segment_rows = await db.execute_fetchall(
+            "SELECT start_time, end_time FROM transcript_segments WHERE session_id = ? AND speaker_id = ?",
+            (session_id, speaker_id),
+        )
+        if not segment_rows:
+            logger.debug("enroll_speaker_voice: no segments for speaker %d", speaker_id)
+            return
+
+        segments = sorted(
+            [(float(r["start_time"]), float(r["end_time"])) for r in segment_rows],
+            key=lambda s: s[1] - s[0],
+            reverse=True,
+        )
+
+        time_ranges: list[tuple[float, float]] = []
+        accumulated = 0.0
+        for start, end in segments:
+            if accumulated >= _AUDIO_CAP_SECONDS:
+                break
+            remaining = _AUDIO_CAP_SECONDS - accumulated
+            actual_end = min(end, start + remaining)
+            duration = actual_end - start
+            if duration < _MIN_SEGMENT_SECS:
+                continue
+            time_ranges.append((start, actual_end))
+            accumulated += duration
+
+        if not time_ranges:
+            logger.debug("enroll_speaker_voice: no usable time ranges for speaker %d", speaker_id)
+            return
+
+        existing_rows = await db.execute_fetchall(
+            "SELECT embedding, num_samples FROM voice_signatures WHERE roster_entry_id = ?",
+            (roster_entry_id,),
+        )
+        old_embedding = None
+        old_count = 0
+        if existing_rows:
+            old_embedding = np.array(json.loads(existing_rows[0]["embedding"]))
+            old_count = int(existing_rows[0]["num_samples"])
+
+    try:
+        wav_path = audio_to_wav(audio_path)
+        try:
+            new_embedding = extract_speaker_embedding(wav_path, time_ranges)
+        finally:
+            if wav_path.exists() and wav_path != audio_path:
+                wav_path.unlink()
+    except Exception:
+        logger.warning(
+            "enroll_speaker_voice: failed to extract embedding for speaker %d",
+            speaker_id,
+            exc_info=True,
+        )
+        return
+
+    if new_embedding is None:
+        logger.debug("enroll_speaker_voice: no embedding extracted for speaker %d", speaker_id)
+        return
+
+    new_count = len(time_ranges)
+
+    if old_embedding is not None and old_count > 0:
+        combined = (old_embedding * old_count + new_embedding * new_count) / (old_count + new_count)
+        norm = np.linalg.norm(combined)
+        if norm > 0:
+            combined = combined / norm
+        final_embedding = combined
+        final_count = old_count + new_count
+    else:
+        final_embedding = new_embedding
+        final_count = new_count
+
+    embedding_json = json.dumps(final_embedding.tolist())
+
+    async with get_db() as db:
+        await db.execute(
+            "DELETE FROM voice_signatures WHERE roster_entry_id = ?",
+            (roster_entry_id,),
+        )
+        await db.execute(
+            """INSERT INTO voice_signatures
+               (campaign_id, roster_entry_id, embedding, source_session_id, num_samples)
+               VALUES (?, ?, ?, ?, ?)""",
+            (campaign_id, roster_entry_id, embedding_json, session_id, final_count),
+        )
+
+    logger.info(
+        "enroll_speaker_voice: enrolled speaker %d (roster_entry %d), %d total samples (was %d)",
+        speaker_id, roster_entry_id, final_count, old_count,
+    )
+
+
 async def run_final_diarization(
     session_id: int,
     wav_path: Path,
