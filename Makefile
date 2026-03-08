@@ -6,7 +6,7 @@ PYTHON := $(VENV)/python
 PIP    := $(VENV)/pip
 ARGS   ?=
 
-.PHONY: help install serve dev build test test-backend test-frontend coverage check docs docs-build screenshots clean
+.PHONY: help install serve serve-no-browser dev build test test-backend test-frontend coverage check docs docs-build screenshots clean
 
 # ---------------------------------------------------------------------------
 # General
@@ -25,6 +25,9 @@ install: ## Install backend and frontend dependencies
 
 serve: build ## Build frontend then start server (ARGS= to pass flags)
 	$(PYTHON) -m talekeeper serve $(ARGS)
+
+serve-no-browser: build ## Build frontend then start server without opening browser
+	$(PYTHON) -m talekeeper serve --no-browser $(ARGS)
 
 dev: ## Start backend in reload mode (no frontend build)
 	$(PYTHON) -m talekeeper serve --reload --no-browser $(ARGS)
