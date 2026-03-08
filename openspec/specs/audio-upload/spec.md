@@ -7,15 +7,15 @@ Allow the DM to upload pre-recorded audio files to a session, triggering automat
 ## Requirements
 
 ### Requirement: Audio file upload
-The system SHALL allow the DM to upload an audio file from their device to a session. The system MUST accept common audio formats including m4a, mp3, wav, webm, ogg, and flac. The uploaded file SHALL be stored in its original format without conversion.
+The system SHALL allow the DM to upload one or more audio files to a session. Each uploaded file SHALL be stored individually and tracked in `session_audio_files`. The system MUST accept common audio formats including m4a, mp3, wav, webm, ogg, and flac.
 
 #### Scenario: Upload an audio file
 - **WHEN** the DM selects an audio file via the file picker on the Recording tab
-- **THEN** the file is uploaded to the backend and saved to `data/audio/<campaign-id>/<session-id>.<original-extension>`
+- **THEN** the file is uploaded to the backend, stored on disk, and added to the session's audio parts list
 
-#### Scenario: Upload replaces existing audio
-- **WHEN** the DM uploads an audio file to a session that already has audio
-- **THEN** the existing audio file is deleted, existing transcript segments and speakers are cleared, and the new file is saved
+#### Scenario: Upload replaces existing audio (single-file fast path)
+- **WHEN** the DM uploads a single audio file and immediately triggers processing
+- **THEN** the file is set as the session's audio_path, existing transcript segments and speakers are cleared, and transcription begins
 
 #### Scenario: Unsupported file type rejected
 - **WHEN** the DM selects a non-audio file (e.g., a PDF or image)

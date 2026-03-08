@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, uploadAudio, processAudio, processAll, type ProcessAllResult } from '../lib/api';
+  import { api, uploadAudio, processAudio, processAll, type ProcessAllResult, type AudioPart, getAudioParts, uploadAudioPart, deleteAudioPart, reorderAudioParts, mergeAudio } from '../lib/api';
 
   type Props = {
     sessionId: number;
@@ -35,6 +35,14 @@
   let chunkProgress = $state<{ chunk: number; total: number } | null>(null);
   let fileInput: HTMLInputElement | undefined = $state();
   let processCanceller: { cancel: () => void } | null = null;
+
+  // Audio parts state
+  let audioParts = $state<AudioPart[]>([]);
+  let partsFileInput: HTMLInputElement | undefined = $state();
+  let uploadingParts = $state(false);
+  let merging = $state(false);
+  let mergeCanceller: { cancel: () => void } | null = null;
+  let mergePhase = $state<string | null>(null);
 
   // Processing progress state
   let processingStartTime = $state<number | null>(null);
@@ -351,6 +359,103 @@
     }
   }
 
+  // Audio parts functions
+  async function loadAudioParts() {
+    try {
+      audioParts = await getAudioParts(sessionId);
+    } catch {
+      // ignore — parts list may be empty
+    }
+  }
+
+  function triggerPartsFileInput() {
+    partsFileInput?.click();
+  }
+
+  async function handlePartsFileSelected(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const files = Array.from(input.files ?? []);
+    if (!files.length) return;
+    input.value = '';
+
+    error = null;
+    uploadingParts = true;
+
+    try {
+      for (const file of files) {
+        await uploadAudioPart(sessionId, file);
+      }
+      await loadAudioParts();
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Upload failed';
+    } finally {
+      uploadingParts = false;
+    }
+  }
+
+  async function removePart(partId: number) {
+    try {
+      await deleteAudioPart(sessionId, partId);
+      await loadAudioParts();
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Delete failed';
+    }
+  }
+
+  async function movePart(index: number, direction: -1 | 1) {
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= audioParts.length) return;
+
+    const newOrder = audioParts.map(p => p.id);
+    const [moved] = newOrder.splice(index, 1);
+    newOrder.splice(newIndex, 0, moved);
+
+    try {
+      await reorderAudioParts(sessionId, newOrder);
+      await loadAudioParts();
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Reorder failed';
+    }
+  }
+
+  function startMergeAndTranscribe() {
+    error = null;
+    merging = true;
+    mergePhase = null;
+    chunkProgress = null;
+    processingStartTime = Date.now();
+
+    mergeCanceller = mergeAudio(
+      sessionId,
+      (p) => {
+        mergePhase = p;
+        if (p !== 'transcription' && p !== 'merging') chunkProgress = null;
+      },
+      (chunk, total) => { chunkProgress = { chunk, total }; },
+      (seg) => { onTranscriptSegment?.(seg); },
+      (_count) => {
+        merging = false;
+        mergePhase = null;
+        chunkProgress = null;
+        processingStartTime = null;
+        mergeCanceller = null;
+        onStatusChange();
+      },
+      (message) => {
+        error = message;
+        merging = false;
+        mergePhase = null;
+        chunkProgress = null;
+        processingStartTime = null;
+        mergeCanceller = null;
+        onStatusChange();
+      },
+      numSpeakers,
+    );
+  }
+
+  $effect(() => { loadAudioParts(); });
+
   // Process All pipeline
   function startProcessAll() {
     error = null;
@@ -400,12 +505,14 @@
     pipelineResult = null;
   }
 
-  let busy = $derived(uploading || processing || pipelineRunning);
+  let busy = $derived(uploading || processing || pipelineRunning || uploadingParts || merging);
   let canRecord = $derived((status === 'draft' || status === 'recording') && !busy);
   let canUpload = $derived((status === 'draft' || status === 'completed') && !busy && recordingState === 'idle');
   let canProcessAll = $derived(
     (status === 'audio_ready' || status === 'completed') && !busy && recordingState === 'idle'
   );
+  let canAddParts = $derived(!busy && recordingState === 'idle');
+  let canMerge = $derived(audioParts.length > 0 && !busy && recordingState === 'idle');
   let isLocked = $derived(isRecordingLocked());
   let hasAudio = $derived(status !== 'draft');
 </script>
@@ -501,6 +608,39 @@
     onchange={handleFileSelected}
   />
 
+  <input
+    type="file"
+    accept="audio/*"
+    multiple
+    class="hidden-input"
+    bind:this={partsFileInput}
+    onchange={handlePartsFileSelected}
+  />
+
+  {#if merging}
+    <div class="processing-banner">
+      {#if mergePhase === 'merging'}
+        <span class="processing-dot"></span>
+        Merging audio parts...
+      {:else if mergePhase === 'diarization'}
+        <span class="processing-dot"></span>
+        Assigning speakers...
+      {:else if chunkProgress}
+        <div class="progress-section">
+          <div class="progress-bar">
+            <div class="progress-fill" style="width: {progressPercent}%"></div>
+          </div>
+          <span class="progress-label">
+            Transcribing {chunkProgress.chunk} / {chunkProgress.total} chunks{etaText ? ` — ${etaText}` : ''}
+          </span>
+        </div>
+      {:else}
+        <span class="processing-dot"></span>
+        Processing...
+      {/if}
+    </div>
+  {/if}
+
   <label class="speakers-label">Speakers
     <input type="number" min="1" max="10" bind:value={numSpeakers} class="speakers-input" disabled={busy} />
   </label>
@@ -527,6 +667,35 @@
     {:else if recordingState === 'paused'}
       <button class="btn btn-record" onclick={resumeRecording}>Resume</button>
       <button class="btn btn-stop" onclick={stopRecording}>Stop</button>
+    {/if}
+  </div>
+
+  <div class="parts-section">
+    <div class="parts-header">
+      <span class="parts-title">Audio Parts</span>
+      <button class="btn btn-sm" onclick={triggerPartsFileInput} disabled={!canAddParts}>
+        {uploadingParts ? 'Uploading...' : 'Add Parts'}
+      </button>
+    </div>
+
+    {#if audioParts.length > 0}
+      <ul class="parts-list">
+        {#each audioParts as part, i}
+          <li class="part-item">
+            <span class="part-name" title={part.original_name}>{part.original_name}</span>
+            <div class="part-actions">
+              <button class="btn-icon" onclick={() => movePart(i, -1)} disabled={i === 0 || busy} title="Move up">↑</button>
+              <button class="btn-icon" onclick={() => movePart(i, 1)} disabled={i === audioParts.length - 1 || busy} title="Move down">↓</button>
+              <button class="btn-icon btn-icon-danger" onclick={() => removePart(part.id)} disabled={busy} title="Remove">✕</button>
+            </div>
+          </li>
+        {/each}
+      </ul>
+      <button class="btn btn-merge" onclick={startMergeAndTranscribe} disabled={!canMerge}>
+        Merge &amp; Transcribe
+      </button>
+    {:else}
+      <p class="parts-empty">No parts uploaded. Add audio files above to merge and transcribe.</p>
     {/if}
   </div>
 </div>
@@ -737,6 +906,112 @@
     color: var(--text);
     font-size: 0.85rem;
     text-align: center;
+  }
+
+  .parts-section {
+    margin-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    padding-top: 1rem;
+  }
+
+  .parts-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+  }
+
+  .parts-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .parts-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 0.75rem 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .part-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.4rem 0.6rem;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 0.85rem;
+  }
+
+  .part-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-right: 0.5rem;
+    color: var(--text);
+  }
+
+  .part-actions {
+    display: flex;
+    gap: 0.25rem;
+    flex-shrink: 0;
+  }
+
+  .btn-icon {
+    padding: 0.2rem 0.4rem;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    line-height: 1;
+  }
+
+  .btn-icon:hover:not(:disabled) {
+    background: var(--bg-surface);
+    color: var(--text);
+  }
+
+  .btn-icon:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .btn-icon-danger:hover:not(:disabled) {
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+
+  .btn-merge {
+    width: 100%;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: 600;
+  }
+
+  .btn-merge:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+
+  .btn-merge:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .parts-empty {
+    font-size: 0.8rem;
+    color: var(--text-faint);
+    margin: 0;
+    font-style: italic;
   }
 
   .pipeline-summary {

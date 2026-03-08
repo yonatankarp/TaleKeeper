@@ -8,9 +8,10 @@ from typing import AsyncIterator
 
 from fastapi import APIRouter, Query, UploadFile, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
 
 from talekeeper.db import get_db
-from talekeeper.paths import get_campaign_audio_dir
+from talekeeper.paths import get_campaign_audio_dir, get_session_audio_parts_dir
 
 router = APIRouter(tags=["recording"])
 
@@ -192,6 +193,145 @@ async def upload_audio(session_id: int, file: UploadFile) -> dict:
     return {"audio_path": str(audio_path)}
 
 
+# ---------------------------------------------------------------------------
+# Audio parts models
+# ---------------------------------------------------------------------------
+
+class AudioPartResponse(BaseModel):
+    id: int
+    session_id: int
+    file_path: str
+    original_name: str
+    sort_order: int
+    created_at: str
+
+
+class ReorderRequest(BaseModel):
+    order: list[int]
+
+
+# ---------------------------------------------------------------------------
+# Audio parts endpoints
+# ---------------------------------------------------------------------------
+
+async def _get_session_campaign(session_id: int) -> dict:
+    """Fetch session row; raise 404 if not found."""
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT id, campaign_id FROM sessions WHERE id = ?", (session_id,)
+        )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return dict(rows[0])
+
+
+@router.post("/api/sessions/{session_id}/audio-parts", response_model=AudioPartResponse)
+async def upload_audio_part(session_id: int, file: UploadFile) -> dict:
+    """Upload one audio file as a new part for the session."""
+    content_type = file.content_type or ""
+    if not content_type.startswith("audio/"):
+        raise HTTPException(status_code=400, detail="Only audio files are accepted")
+
+    session = await _get_session_campaign(session_id)
+    campaign_id = session["campaign_id"]
+
+    original_name = file.filename or "audio"
+    ext = Path(original_name).suffix or (mimetypes.guess_extension(content_type) or ".bin")
+
+    # Determine next sort_order
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT COALESCE(MAX(sort_order), 0) AS max_order FROM session_audio_files WHERE session_id = ?",
+            (session_id,),
+        )
+    next_order = (rows[0]["max_order"] if rows else 0) + 1
+
+    # Save file
+    parts_dir = get_session_audio_parts_dir(campaign_id, session_id)
+    parts_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = f"{next_order}_{Path(original_name).stem}{ext}"
+    file_path = parts_dir / safe_name
+
+    with open(file_path, "wb") as f:
+        while chunk := await file.read(1024 * 1024):
+            f.write(chunk)
+
+    async with get_db() as db:
+        cursor = await db.execute(
+            "INSERT INTO session_audio_files (session_id, file_path, original_name, sort_order) VALUES (?, ?, ?, ?)",
+            (session_id, str(file_path), original_name, next_order),
+        )
+        row_id = cursor.lastrowid
+        rows = await db.execute_fetchall(
+            "SELECT * FROM session_audio_files WHERE id = ?", (row_id,)
+        )
+
+    return dict(rows[0])
+
+
+@router.get("/api/sessions/{session_id}/audio-parts", response_model=list[AudioPartResponse])
+async def list_audio_parts(session_id: int) -> list[dict]:
+    """Return ordered list of audio parts for the session."""
+    await _get_session_campaign(session_id)
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM session_audio_files WHERE session_id = ? ORDER BY sort_order",
+            (session_id,),
+        )
+    return [dict(r) for r in rows]
+
+
+@router.delete("/api/sessions/{session_id}/audio-parts/{part_id}")
+async def delete_audio_part(session_id: int, part_id: int) -> dict:
+    """Delete an audio part: remove file from disk and row from DB, renumber sort_order."""
+    await _get_session_campaign(session_id)
+
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM session_audio_files WHERE id = ? AND session_id = ?",
+            (part_id, session_id),
+        )
+        if not rows:
+            raise HTTPException(status_code=404, detail="Audio part not found")
+
+        part = dict(rows[0])
+        file_path = Path(part["file_path"])
+        if file_path.exists():
+            file_path.unlink()
+
+        await db.execute(
+            "DELETE FROM session_audio_files WHERE id = ?", (part_id,)
+        )
+
+        # Renumber sort_order for remaining parts
+        remaining = await db.execute_fetchall(
+            "SELECT id FROM session_audio_files WHERE session_id = ? ORDER BY sort_order",
+            (session_id,),
+        )
+        for i, row in enumerate(remaining, start=1):
+            await db.execute(
+                "UPDATE session_audio_files SET sort_order = ? WHERE id = ?",
+                (i, row["id"]),
+            )
+
+    return {"deleted": part_id}
+
+
+@router.put("/api/sessions/{session_id}/audio-parts/reorder")
+async def reorder_audio_parts(session_id: int, body: ReorderRequest) -> dict:
+    """Reorder audio parts by assigning sort_order based on the provided ID sequence."""
+    await _get_session_campaign(session_id)
+
+    async with get_db() as db:
+        for i, part_id in enumerate(body.order, start=1):
+            await db.execute(
+                "UPDATE session_audio_files SET sort_order = ? WHERE id = ? AND session_id = ?",
+                (i, part_id, session_id),
+            )
+
+    return {"reordered": True}
+
+
 def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
@@ -247,10 +387,11 @@ async def process_audio(session_id: int, num_speakers: int | None = Query(defaul
                     (session_id,),
                 )
 
+            from talekeeper.services.thread_utils import iterate_in_thread
             kwargs = {"language": language}
             if model_name:
                 kwargs["model_name"] = model_name
-            for item in transcribe_chunked(audio_path, **kwargs):
+            async for item in iterate_in_thread(transcribe_chunked(audio_path, **kwargs)):
                 if isinstance(item, ChunkProgress):
                     yield _sse_event("progress", {
                         "chunk": item.chunk,
@@ -339,6 +480,161 @@ async def process_audio(session_id: int, num_speakers: int | None = Query(defaul
     return StreamingResponse(sse_generator(), media_type="text/event-stream")
 
 
+@router.post("/api/sessions/{session_id}/merge-audio")
+async def merge_audio(session_id: int, num_speakers: int | None = Query(default=None, ge=1, le=10)) -> StreamingResponse:
+    """Merge audio parts, then run transcription + diarization, streaming progress via SSE."""
+    from talekeeper.services.transcription import (
+        transcribe_chunked,
+        TranscriptSegment,
+        ChunkProgress,
+    )
+    from talekeeper.services.resource_orchestration import (
+        cleanup_transcription,
+        cleanup_diarization,
+    )
+
+    session = await _get_session_campaign(session_id)
+    campaign_id = session["campaign_id"]
+
+    # Check that there are audio parts
+    async with get_db() as db:
+        parts = await db.execute_fetchall(
+            "SELECT id FROM session_audio_files WHERE session_id = ?", (session_id,)
+        )
+        if not parts:
+            raise HTTPException(status_code=400, detail="No audio parts for this session")
+
+        rows = await db.execute_fetchall("SELECT * FROM sessions WHERE id = ?", (session_id,))
+        session_row = dict(rows[0])
+        language = session_row.get("language", "en")
+
+        model_rows = await db.execute_fetchall(
+            "SELECT value FROM settings WHERE key = 'whisper_model'"
+        )
+        model_name = model_rows[0]["value"] if model_rows and model_rows[0]["value"] else None
+
+    async def sse_generator() -> AsyncIterator[str]:
+        segments_count = 0
+        try:
+            # Phase 1: Merge audio parts
+            yield _sse_event("phase", {"phase": "merging"})
+
+            from talekeeper.services.audio_merge import merge_audio_parts
+            audio_dir = get_campaign_audio_dir(campaign_id)
+            audio_dir.mkdir(parents=True, exist_ok=True)
+            merged_path = audio_dir / f"{session_id}_merged.wav"
+
+            await merge_audio_parts(session_id, merged_path)
+
+            async with get_db() as db:
+                await db.execute(
+                    "UPDATE sessions SET audio_path = ?, updated_at = datetime('now') WHERE id = ?",
+                    (str(merged_path), session_id),
+                )
+
+            # Clear existing transcript/speakers and set status to transcribing
+            async with get_db() as db:
+                await db.execute(
+                    "DELETE FROM transcript_segments WHERE session_id = ?", (session_id,)
+                )
+                await db.execute(
+                    "DELETE FROM speakers WHERE session_id = ?", (session_id,)
+                )
+                await db.execute(
+                    "UPDATE sessions SET status = 'transcribing', updated_at = datetime('now') WHERE id = ?",
+                    (session_id,),
+                )
+
+            # Phase 2: Transcription
+            from talekeeper.services.thread_utils import iterate_in_thread
+            kwargs = {"language": language}
+            if model_name:
+                kwargs["model_name"] = model_name
+            async for item in iterate_in_thread(transcribe_chunked(merged_path, **kwargs)):
+                if isinstance(item, ChunkProgress):
+                    yield _sse_event("progress", {
+                        "chunk": item.chunk,
+                        "total_chunks": item.total_chunks,
+                    })
+                elif isinstance(item, TranscriptSegment):
+                    async with get_db() as db:
+                        await db.execute(
+                            "INSERT INTO transcript_segments (session_id, text, start_time, end_time) VALUES (?, ?, ?, ?)",
+                            (session_id, item.text, item.start_time, item.end_time),
+                        )
+                    yield _sse_event("segment", {
+                        "text": item.text,
+                        "start_time": item.start_time,
+                        "end_time": item.end_time,
+                    })
+                    segments_count += 1
+
+            cleanup_transcription()
+
+            # Phase 3: Diarization
+            yield _sse_event("phase", {"phase": "diarization"})
+
+            from talekeeper.services.diarization import run_final_diarization
+            from talekeeper.services.audio import audio_to_wav
+
+            progress_events: list[str] = []
+
+            def _diarization_progress(stage: str, detail: dict) -> None:
+                if stage == "vad_start":
+                    progress_events.append(_sse_event("progress", {"detail": "Detecting speech activity..."}))
+                elif stage == "vad_done":
+                    n = detail["num_segments"]
+                    secs = int(detail["total_speech_seconds"])
+                    progress_events.append(_sse_event("progress", {"detail": f"Found {n} speech segments ({secs}s of speech)"}))
+                elif stage == "change_detection_start":
+                    progress_events.append(_sse_event("progress", {"detail": "Detecting speaker changes..."}))
+                elif stage == "change_detection_done":
+                    n = detail["num_segments_processed"]
+                    c = detail["num_changes_found"]
+                    progress_events.append(_sse_event("progress", {"detail": f"Found {c} speaker changes in {n} segments"}))
+                elif stage == "embeddings":
+                    cur, total = detail["current"], detail["total"]
+                    if cur % max(1, total // 20) == 0 or cur == total:
+                        progress_events.append(_sse_event("progress", {"detail": f"Extracting speaker embeddings ({cur}/{total})..."}))
+                elif stage == "clustering_done":
+                    ns = detail["num_speakers"]
+                    nseg = detail["num_segments"]
+                    progress_events.append(_sse_event("progress", {"detail": f"Found {ns} speakers, {nseg} segments"}))
+
+            wav_path = audio_to_wav(merged_path)
+            try:
+                await run_final_diarization(session_id, wav_path, num_speakers_override=num_speakers, progress_callback=_diarization_progress)
+            finally:
+                if wav_path.exists():
+                    wav_path.unlink()
+
+            for evt in progress_events:
+                yield evt
+
+            cleanup_diarization()
+
+            async with get_db() as db:
+                await db.execute(
+                    "UPDATE sessions SET status = 'completed', updated_at = datetime('now') WHERE id = ?",
+                    (session_id,),
+                )
+
+            yield _sse_event("done", {"segments_count": segments_count})
+
+            from talekeeper.services.session_naming import maybe_generate_and_update_name
+            asyncio.create_task(maybe_generate_and_update_name(session_id))
+
+        except Exception as exc:
+            yield _sse_event("error", {"message": str(exc)})
+            async with get_db() as db:
+                await db.execute(
+                    "UPDATE sessions SET status = 'completed', updated_at = datetime('now') WHERE id = ?",
+                    (session_id,),
+                )
+
+    return StreamingResponse(sse_generator(), media_type="text/event-stream")
+
+
 @router.post("/api/sessions/{session_id}/process-all")
 async def process_all(session_id: int, num_speakers: int | None = Query(default=None, ge=1, le=10)) -> StreamingResponse:
     """Run the full pipeline: transcription → diarization → summaries → image, with cleanup between phases."""
@@ -397,10 +693,11 @@ async def process_all(session_id: int, num_speakers: int | None = Query(default=
                     (session_id,),
                 )
 
+            from talekeeper.services.thread_utils import iterate_in_thread
             kwargs = {"language": language}
             if model_name:
                 kwargs["model_name"] = model_name
-            for item in transcribe_chunked(audio_path, **kwargs):
+            async for item in iterate_in_thread(transcribe_chunked(audio_path, **kwargs)):
                 if isinstance(item, ChunkProgress):
                     yield _sse_event("progress", {
                         "chunk": item.chunk,

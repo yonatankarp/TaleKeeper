@@ -421,3 +421,142 @@ async def test_process_all_session_not_found(client: AsyncClient) -> None:
     """POST /api/sessions/{id}/process-all returns 404 for nonexistent session."""
     resp = await client.post("/api/sessions/99999/process-all")
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Task 5.1: Upload two audio parts, verify both rows in session_audio_files
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_upload_two_audio_parts(client: AsyncClient, tmp_path: Path) -> None:
+    """POST audio-parts twice → two rows in session_audio_files with sequential sort_order."""
+    async with get_db() as db:
+        ids = await _seed(db)
+    session_id = ids["session_id"]
+
+    with patch("talekeeper.routers.recording.get_session_audio_parts_dir", return_value=tmp_path / "parts"):
+        resp1 = await client.post(
+            f"/api/sessions/{session_id}/audio-parts",
+            files={"file": ("part1.mp3", io.BytesIO(b"audio-bytes-1"), "audio/mpeg")},
+        )
+        assert resp1.status_code == 200
+        part1 = resp1.json()
+        assert part1["sort_order"] == 1
+        assert part1["original_name"] == "part1.mp3"
+
+        resp2 = await client.post(
+            f"/api/sessions/{session_id}/audio-parts",
+            files={"file": ("part2.wav", io.BytesIO(b"audio-bytes-2"), "audio/wav")},
+        )
+        assert resp2.status_code == 200
+        part2 = resp2.json()
+        assert part2["sort_order"] == 2
+        assert part2["original_name"] == "part2.wav"
+
+    # Verify both rows in DB
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM session_audio_files WHERE session_id = ? ORDER BY sort_order",
+            (session_id,),
+        )
+    assert len(rows) == 2
+    assert rows[0]["sort_order"] == 1
+    assert rows[1]["sort_order"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Task 5.2: Reorder parts, verify sort_order updated
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_reorder_audio_parts(client: AsyncClient, tmp_path: Path) -> None:
+    """PUT audio-parts/reorder → sort_order values updated to match requested order."""
+    async with get_db() as db:
+        ids = await _seed(db)
+    session_id = ids["session_id"]
+
+    with patch("talekeeper.routers.recording.get_session_audio_parts_dir", return_value=tmp_path / "parts"):
+        resp1 = await client.post(
+            f"/api/sessions/{session_id}/audio-parts",
+            files={"file": ("a.mp3", io.BytesIO(b"aa"), "audio/mpeg")},
+        )
+        resp2 = await client.post(
+            f"/api/sessions/{session_id}/audio-parts",
+            files={"file": ("b.mp3", io.BytesIO(b"bb"), "audio/mpeg")},
+        )
+    id1 = resp1.json()["id"]
+    id2 = resp2.json()["id"]
+
+    # Reorder: put id2 first, id1 second
+    resp = await client.put(
+        f"/api/sessions/{session_id}/audio-parts/reorder",
+        json={"order": [id2, id1]},
+    )
+    assert resp.status_code == 200
+
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT id, sort_order FROM session_audio_files WHERE session_id = ? ORDER BY sort_order",
+            (session_id,),
+        )
+    assert rows[0]["id"] == id2
+    assert rows[0]["sort_order"] == 1
+    assert rows[1]["id"] == id1
+    assert rows[1]["sort_order"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Task 5.3: Delete a part, verify file removed and row gone
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_delete_audio_part(client: AsyncClient, tmp_path: Path) -> None:
+    """DELETE audio-parts/{id} → file removed from disk and row deleted, sort_order renumbered."""
+    async with get_db() as db:
+        ids = await _seed(db)
+    session_id = ids["session_id"]
+
+    parts_dir = tmp_path / "parts"
+    with patch("talekeeper.routers.recording.get_session_audio_parts_dir", return_value=parts_dir):
+        resp1 = await client.post(
+            f"/api/sessions/{session_id}/audio-parts",
+            files={"file": ("x.mp3", io.BytesIO(b"xx"), "audio/mpeg")},
+        )
+        resp2 = await client.post(
+            f"/api/sessions/{session_id}/audio-parts",
+            files={"file": ("y.mp3", io.BytesIO(b"yy"), "audio/mpeg")},
+        )
+    part1 = resp1.json()
+    part2 = resp2.json()
+    file_path = Path(part1["file_path"])
+    assert file_path.exists()
+
+    # Delete the first part
+    del_resp = await client.delete(f"/api/sessions/{session_id}/audio-parts/{part1['id']}")
+    assert del_resp.status_code == 200
+    assert not file_path.exists()
+
+    # Row is gone from DB
+    async with get_db() as db:
+        rows = await db.execute_fetchall(
+            "SELECT * FROM session_audio_files WHERE session_id = ? ORDER BY sort_order",
+            (session_id,),
+        )
+    assert len(rows) == 1
+    assert rows[0]["id"] == part2["id"]
+    assert rows[0]["sort_order"] == 1  # renumbered
+
+
+# ---------------------------------------------------------------------------
+# Task 5.5: POST merge-audio with no parts returns 400
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_merge_audio_no_parts_returns_400(client: AsyncClient) -> None:
+    """POST merge-audio returns 400 when the session has no audio parts."""
+    async with get_db() as db:
+        ids = await _seed(db)
+
+    resp = await client.post(f"/api/sessions/{ids['session_id']}/merge-audio")
+    assert resp.status_code == 400
+    assert "parts" in resp.json()["detail"].lower()

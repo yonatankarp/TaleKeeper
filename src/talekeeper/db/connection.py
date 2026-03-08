@@ -37,6 +37,8 @@ async def _apply_schema(db: aiosqlite.Connection) -> None:
     await _migrate_add_mlx_settings(db)
     await _migrate_add_is_overlap_column(db)
     await _migrate_add_parent_segment_id_column(db)
+    await _migrate_add_campaign_party_images_table(db)
+    await _migrate_add_session_audio_files_table(db)
 
 
 async def _migrate_add_session_number_column(db: aiosqlite.Connection) -> None:
@@ -215,6 +217,44 @@ async def _migrate_add_parent_segment_id_column(db: aiosqlite.Connection) -> Non
         )
 
 
+async def _migrate_add_session_audio_files_table(db: aiosqlite.Connection) -> None:
+    """Create session_audio_files table if it doesn't exist (for pre-existing databases)."""
+    tables = await db.execute_fetchall(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='session_audio_files'"
+    )
+    if not tables:
+        await db.execute("""
+            CREATE TABLE session_audio_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                file_path TEXT NOT NULL,
+                original_name TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+
+
+async def _migrate_add_campaign_party_images_table(db: aiosqlite.Connection) -> None:
+    """Create campaign_party_images table if it doesn't exist (for pre-existing databases)."""
+    tables = await db.execute_fetchall(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='campaign_party_images'"
+    )
+    if not tables:
+        await db.execute("""
+            CREATE TABLE campaign_party_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+                file_path TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                scene_description TEXT,
+                model_used TEXT,
+                generated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(campaign_id)
+            )
+        """)
+
+
 async def _migrate_add_mlx_settings(db: aiosqlite.Connection) -> None:
     """Insert default settings rows for MLX pipeline configuration."""
     defaults = {
@@ -325,6 +365,26 @@ CREATE TABLE IF NOT EXISTS session_images (
     scene_description TEXT,
     model_used TEXT,
     generated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS campaign_party_images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    file_path TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    scene_description TEXT,
+    model_used TEXT,
+    generated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(campaign_id)
+);
+
+CREATE TABLE IF NOT EXISTS session_audio_files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    file_path TEXT NOT NULL,
+    original_name TEXT NOT NULL,
+    sort_order INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS settings (
