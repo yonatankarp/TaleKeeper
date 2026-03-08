@@ -188,12 +188,10 @@
     return s.diarization_label;
   }
 
-  // Speaker color based on label hash
+  // Speaker colors assigned by index to guarantee uniqueness
   const colors = ['#e94560', '#f0a500', '#2d6a4f', '#5e60ce', '#00b4d8', '#ff6b6b', '#48bfe3', '#72efdd'];
-  function speakerColor(label: string): string {
-    let hash = 0;
-    for (const ch of label) hash = ((hash << 5) - hash) + ch.charCodeAt(0);
-    return colors[Math.abs(hash) % colors.length];
+  function speakerColor(index: number): string {
+    return colors[index % colors.length];
   }
 
   $effect(() => { load(); });
@@ -252,9 +250,9 @@
 
     {#if editing}
       <div class="batch-form">
-        {#each speakers as s}
+        {#each speakers as s, i}
           <div class="batch-row">
-            <span class="speaker-badge" style="background: {speakerColor(s.diarization_label)}">
+            <span class="speaker-badge" style="background: {speakerColor(i)}">
               {s.diarization_label}
             </span>
             <div class="batch-inputs">
@@ -297,9 +295,9 @@
         </div>
       </div>
     {:else}
-      {#each speakers as s}
+      {#each speakers as s, i}
         <div class="speaker-row">
-          <span class="speaker-badge" style="background: {speakerColor(s.diarization_label)}">
+          <span class="speaker-badge" style="background: {speakerColor(i)}">
             {speakerDisplay(s)}
           </span>
           {#if hasSignature(s)}
