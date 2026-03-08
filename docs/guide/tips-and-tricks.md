@@ -109,6 +109,7 @@ Set the language at campaign level (applies to new sessions) or override per-ses
 | Feature | Where to Find It |
 |---------|-----------------|
 | Process All pipeline (one-click transcribe → diarize → summarize → illustrate) | [Recording](recording/index.md) |
+| Multi-part audio upload with ordering and merge | [Uploading](recording/uploading.md) |
 | Voice signature confidence threshold | [Voice Signatures](speakers/voice-signatures.md) |
 | D&D Beyond character import | [Roster](campaigns/roster.md) |
 | PDF character sheet extraction | [Roster](campaigns/roster.md) |
