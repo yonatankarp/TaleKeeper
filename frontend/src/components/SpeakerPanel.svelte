@@ -43,6 +43,12 @@
     return entry ? signatureRosterIds.has(entry.id) : false;
   }
 
+  function getSignature(s: Speaker): VoiceSignature | undefined {
+    if (!s.player_name || !s.character_name) return undefined;
+    const entry = roster.find(r => r.player_name === s.player_name && r.character_name === s.character_name);
+    return entry ? signatures.find(sig => sig.roster_entry_id === entry.id) : undefined;
+  }
+
   async function load() {
     const [suggestionsResp, rosterResp, sigResp] = await Promise.all([
       api.get<Speaker[]>(`/sessions/${sessionId}/speakers`),
@@ -297,7 +303,7 @@
             {speakerDisplay(s)}
           </span>
           {#if hasSignature(s)}
-            <span class="signature-badge" title="Voice signature enrolled">VS</span>
+            <span class="signature-badge" title="Voice signature ({getSignature(s)?.num_samples} samples)">VS</span>
           {/if}
         </div>
       {/each}
