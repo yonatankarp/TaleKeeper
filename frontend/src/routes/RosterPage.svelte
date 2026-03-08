@@ -7,8 +7,10 @@
   let { campaignId }: Props = $props();
 
   type RosterEntry = { id: number; player_name: string; character_name: string; description: string; sheet_url: string; sheet_data: string; is_active: number };
+  type VoiceSig = { id: number; roster_entry_id: number; num_samples: number; created_at: string };
 
   let entries = $state<RosterEntry[]>([]);
+  let voiceSigs = $state<Map<number, VoiceSig>>(new Map());
   let pageLoading = $state(true);
   let newPlayer = $state('');
   let newCharacter = $state('');
@@ -21,12 +23,18 @@
   let uploadingId = $state<number | null>(null);
   let importingId = $state<number | null>(null);
   let refreshingId = $state<number | null>(null);
+  let voiceUploadingId = $state<number | null>(null);
   let urlInputId = $state<number | null>(null);
   let urlValue = $state('');
   let uploadError = $state<string | null>(null);
 
   async function load() {
-    entries = await api.get<RosterEntry[]>(`/campaigns/${campaignId}/roster`);
+    const [roster, sigs] = await Promise.all([
+      api.get<RosterEntry[]>(`/campaigns/${campaignId}/roster`),
+      api.get<VoiceSig[]>(`/campaigns/${campaignId}/voice-signatures`),
+    ]);
+    entries = roster;
+    voiceSigs = new Map(sigs.map(s => [s.roster_entry_id, s]));
     pageLoading = false;
   }
 
@@ -139,7 +147,39 @@
     }
   }
 
-  let busy = $derived(uploadingId !== null || importingId !== null || refreshingId !== null);
+  async function uploadVoiceSample(entryId: number, file: File) {
+    voiceUploadingId = entryId;
+    uploadError = null;
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const resp = await fetch(`/api/roster/${entryId}/upload-voice-sample`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ detail: 'Upload failed' }));
+        throw new Error(err.detail || 'Upload failed');
+      }
+      await load();
+    } catch (e: any) {
+      uploadError = e.message;
+    } finally {
+      voiceUploadingId = null;
+    }
+  }
+
+  function triggerVoiceUpload(entryId: number) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'audio/*';
+    input.onchange = () => {
+      if (input.files?.[0]) uploadVoiceSample(entryId, input.files[0]);
+    };
+    input.click();
+  }
+
+  let busy = $derived(uploadingId !== null || importingId !== null || refreshingId !== null || voiceUploadingId !== null);
 
   $effect(() => { load(); });
 </script>
@@ -193,8 +233,16 @@
                 <strong>{e.character_name}</strong>
                 <span class="player-label">({e.player_name})</span>
                 {#if !e.is_active}<span class="inactive-badge">Inactive</span>{/if}
+                {#if voiceSigs.has(e.id)}<span class="sig-badge" title="Voice signature stored ({voiceSigs.get(e.id)!.num_samples} samples)">Voice ID</span>{/if}
               </div>
               <div class="btn-group">
+                <button class="btn btn-sm btn-voice" onclick={() => triggerVoiceUpload(e.id)} disabled={busy}>
+                  {#if voiceUploadingId === e.id}
+                    <Spinner size="12px" /> Processing...
+                  {:else}
+                    {voiceSigs.has(e.id) ? 'Replace Voice' : 'Upload Voice'}
+                  {/if}
+                </button>
                 <button class="btn btn-sm btn-upload" onclick={() => triggerUpload(e.id)} disabled={busy}>
                   {#if uploadingId === e.id}
                     <Spinner size="12px" /> Extracting...
@@ -339,6 +387,14 @@
     padding: 0.15rem 0.4rem;
     border-radius: 8px;
   }
+  .sig-badge {
+    font-size: 0.7rem;
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+    padding: 0.15rem 0.4rem;
+    border-radius: 8px;
+  }
 
   .card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
 
@@ -368,6 +424,8 @@
   .btn-primary:hover { background: var(--accent-hover); }
   .btn-upload { border-color: var(--accent); color: var(--accent); }
   .btn-upload:hover:not(:disabled) { background: var(--accent); color: #fff; }
+  .btn-voice { border-color: var(--accent); color: var(--accent); }
+  .btn-voice:hover:not(:disabled) { background: var(--accent); color: #fff; }
   .btn-refresh { border-color: var(--text-muted); color: var(--text-muted); }
   .btn-refresh:hover:not(:disabled) { background: var(--text-muted); color: #fff; }
   .btn-danger { color: var(--danger); }
