@@ -377,9 +377,9 @@
   }
 
   .success {
-    background: color-mix(in srgb, var(--btn-green) 15%, transparent);
-    border: 1px solid var(--btn-green);
-    color: var(--btn-green);
+    background: color-mix(in srgb, #2d9e5f 15%, transparent);
+    border: 1px solid #2d9e5f;
+    color: #2d9e5f;
     padding: 0.5rem 0.75rem;
     border-radius: 4px;
     font-size: 0.85rem;
@@ -409,11 +409,12 @@
     width: 1.5rem;
     height: 1.5rem;
     border-radius: 50%;
-    background: var(--btn-green);
+    background: #2d9e5f;
     color: #fff;
     font-size: 0.6rem;
     font-weight: 700;
     flex-shrink: 0;
+    cursor: help;
   }
 
   .batch-form {
@@ -481,8 +482,8 @@
   .btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn-sm { padding: 0.25rem 0.5rem; }
-  .btn-voice { background: var(--btn-green); border-color: var(--btn-green); color: #fff; }
-  .btn-voice:hover { opacity: 0.9; background: var(--btn-green); }
+  .btn-voice { background: #2d9e5f; border-color: #2d9e5f; color: #fff; }
+  .btn-voice:hover { opacity: 0.9; background: #2d9e5f; }
   .btn-group { display: flex; gap: 0.5rem; }
 
   .empty { color: var(--text-faint); font-size: 0.85rem; }
