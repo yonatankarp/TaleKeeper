@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -96,10 +96,11 @@ async def retranscribe(session_id: int, body: RetranscribeRequest) -> StreamingR
                     (session_id,),
                 )
 
+            from talekeeper.services.thread_utils import iterate_in_thread
             kwargs = {"language": language}
             if body.model_name:
                 kwargs["model_name"] = body.model_name
-            for item in transcribe_chunked(audio_path, **kwargs):
+            async for item in iterate_in_thread(transcribe_chunked(audio_path, **kwargs)):
                 if isinstance(item, ChunkProgress):
                     yield _sse_event("progress", {
                         "chunk": item.chunk,
@@ -183,3 +184,20 @@ async def retranscribe(session_id: int, body: RetranscribeRequest) -> StreamingR
                 )
 
     return StreamingResponse(sse_generator(), media_type="text/event-stream")
+
+
+@router.post("/api/sessions/{session_id}/import-transcript")
+async def import_transcript(session_id: int, file: UploadFile = File(...)) -> dict:
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    async with get_db() as db:
+        rows = await db.execute_fetchall("SELECT id FROM sessions WHERE id = ?", (session_id,))
+        if not rows:
+            raise HTTPException(status_code=404, detail="Session not found")
+    pdf_bytes = await file.read()
+    from talekeeper.services.transcript_import import import_transcript_from_pdf
+    try:
+        result = await import_transcript_from_pdf(session_id, pdf_bytes)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return result

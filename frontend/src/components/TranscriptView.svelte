@@ -320,7 +320,7 @@
     <p class="empty">Transcribing chunk {chunkProgress.chunk} of {chunkProgress.total}…</p>
   {:else if segments.length === 0}
     <p class="empty">
-      {isRecording ? 'Waiting for speech...' : 'No transcript available. Start recording or retranscribe audio to generate one.'}
+      {isRecording ? 'Waiting for speech...' : 'No transcript available. Start recording, upload audio, or import a Gemini PDF transcript to get started.'}
     </p>
   {:else if filteredSegments().length === 0}
     <p class="empty">No matches found.</p>

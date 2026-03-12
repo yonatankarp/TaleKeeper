@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, uploadAudio, processAudio, processAll, type ProcessAllResult, type AudioPart, getAudioParts, uploadAudioPart, deleteAudioPart, reorderAudioParts, mergeAudio } from '../lib/api';
+  import { api, uploadAudio, processAudio, processAll, type ProcessAllResult, type AudioPart, getAudioParts, uploadAudioPart, deleteAudioPart, reorderAudioParts, mergeAudio, importTranscriptPdf } from '../lib/api';
 
   type Props = {
     sessionId: number;
@@ -505,7 +505,30 @@
     pipelineResult = null;
   }
 
-  let busy = $derived(uploading || processing || pipelineRunning || uploadingParts || merging);
+  // PDF import state
+  let importingTranscript = $state(false);
+  let pdfFileInput: HTMLInputElement | undefined = $state();
+
+  function triggerPdfInput() { pdfFileInput?.click(); }
+
+  async function handlePdfSelected(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    input.value = '';
+    error = null;
+    importingTranscript = true;
+    try {
+      await importTranscriptPdf(sessionId, file);
+      onStatusChange();
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Import failed';
+    } finally {
+      importingTranscript = false;
+    }
+  }
+
+  let busy = $derived(uploading || processing || pipelineRunning || uploadingParts || merging || importingTranscript);
   let canRecord = $derived((status === 'draft' || status === 'recording') && !busy);
   let canUpload = $derived((status === 'draft' || status === 'completed') && !busy && recordingState === 'idle');
   let canProcessAll = $derived(
@@ -560,6 +583,13 @@
     </div>
   {/if}
 
+  {#if importingTranscript}
+    <div class="processing-banner">
+      <span class="processing-dot"></span>
+      Importing transcript…
+    </div>
+  {/if}
+
   {#if pipelineRunning}
     <div class="processing-banner pipeline-banner">
       <div class="pipeline-header">
@@ -610,6 +640,14 @@
 
   <input
     type="file"
+    accept=".pdf"
+    class="hidden-input"
+    bind:this={pdfFileInput}
+    onchange={handlePdfSelected}
+  />
+
+  <input
+    type="file"
     accept="audio/*"
     multiple
     class="hidden-input"
@@ -652,6 +690,9 @@
       </button>
       <button class="btn" onclick={triggerFileInput} disabled={!canUpload || isLocked}>
         Upload Audio
+      </button>
+      <button class="btn" onclick={triggerPdfInput} disabled={busy || isLocked}>
+        Import Transcript
       </button>
       {#if hasAudio && canProcessAll}
         <button class="btn btn-process-all" onclick={startProcessAll}>

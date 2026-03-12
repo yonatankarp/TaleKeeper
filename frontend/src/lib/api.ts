@@ -147,6 +147,24 @@ export function mergeAudio(
   };
 }
 
+export async function importTranscriptPdf(
+  sessionId: number,
+  file: File,
+): Promise<{ segments_count: number; speakers_count: number }> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${BASE}/sessions/${sessionId}/import-transcript`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    const detail = err.detail;
+    throw new Error(typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : res.statusText);
+  }
+  return res.json();
+}
+
 export async function uploadAudio(sessionId: number, file: File): Promise<{ audio_path: string }> {
   const form = new FormData();
   form.append('file', file);
